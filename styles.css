@@ -6,3 +6,114 @@ available in the app when your plugin is enabled.
 If your plugin does not need CSS, delete this file.
 
 */
+
+.file-browser-container {
+    padding: 10px;
+    width: 100%;
+    height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.file-browser-container:focus {
+    outline: none; /* Remove default focus outline */
+}
+
+.file-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
+}
+
+.file-item {
+    display: flex;
+    align-items: center;
+    color: var(--text-normal);
+    width: 100%;
+    min-width: 0;
+}
+
+.file-item-indent {
+    flex-shrink: 0;
+}
+
+.file-item-content {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    flex: 1;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.file-item-content:hover {
+    background-color: var(--background-modifier-hover);
+}
+
+.file-item-content.is-selected {
+    background-color: var(--background-modifier-success);
+}
+
+.file-browser-container:focus .file-item-content.is-selected {
+    background-color: var(--background-modifier-success-hover);
+}
+
+.file-item .collapse-icon {
+    margin-right: 6px;
+    font-size: 10px;
+    width: 12px;
+    flex-shrink: 0;
+    display: inline-block;
+    color: var(--text-muted);
+}
+
+.file-name-container {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: 6px;
+    flex: 1;
+    padding-right: 16px;
+}
+
+.file-item.has-children {
+    font-weight: 500;
+}
+
+.file-item.is-folder {
+    color: var(--text-accent);
+}
+
+.file-item.is-folder .file-name {
+    font-weight: 600;
+}
+
+.file-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+    margin-right: auto;
+}
+
+.file-extensions {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    flex-shrink: 0;
+    min-width: 60px;
+    justify-content: flex-end;
+}
+
+.file-extension {
+    font-size: 0.8em;
+    padding: 2px 4px;
+    border-radius: 4px;
+    background-color: var(--background-modifier-border);
+    color: var(--text-muted);
+    font-weight: normal;
+    flex-shrink: 0;
+}

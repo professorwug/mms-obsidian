@@ -1,0 +1,82 @@
+[project]
+name = "zettelfiles"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.pixi.project]
+channels = ["nvidia", "conda-forge", "fastai", "pytorch"] 
+platforms = ["linux-64", "osx-arm64"]
+homepage = 'https://wherewith.ai'
+
+[tool.pixi.dependencies] # Conda dependencies managed by pixi
+# # Common & Ubiquitous
+notebook = ">=7.0.7,<7.1"
+nbformat = ">=5.9.2,<5.10"
+seaborn = ">=0.13.2,<0.14"
+scipy = ">=1.12.0,<1.13"
+pandas = ">=2.2.0,<2.3"
+matplotlib = ">=3.8.2,<3.9"
+jupyter = ">=1.0.0,<1.1"
+rich = ">=13.7.0,<13.8"
+typer = ">=0.9.0,<0.10"
+sympy = ">=1.12,<2"
+plotly = ">=5.18.0,<5.19"
+tqdm = ">=4.66.1,<4.67"
+# Literate Programming
+nbdev = "2.2.10.*"
+fastcore = "1.5.29.*"
+fastapi = ">=0.110.3,<0.111"
+uvicorn = ">=0.34.0,<0.35"
+watchdog = ">=6.0.0,<7"
+websockets = ">=14.1,<15"
+pytest = ">=8.3.4,<9"
+pytest-asyncio = ">=0.24.0,<0.25"
+pytest-cov = ">=6.0.0,<7"
+httpx = ">=0.28.1,<0.29"
+# Project Specific
+
+
+[tool.pixi.pypi-dependencies]
+# editable install of project itself
+zettelfiles = { path = ".", editable = true }
+# other required python packages
+
+
+[tool.pixi.tasks]
+# install the library in editable mode
+postinstall = "python -m ipykernel install --user --name r{{ cookiecutter.project_slug }}-zetteldev && nbdev_install_hooks"
+# test the installation
+test_import = "python -c 'import {{ cookiecutter.project_slug }}'"
+# Adding and creating experiments
+new_experiment = "bash .zetteldev/new_experiment.sh"
+# Jupyter cache shorthands
+run_experiments = "jcache project execute --executor local-parallel"
+tests = "python -m unittest discover -s tests -p 'test_*.py'"
+# NBDev shorthands
+nbsync = "nbdev_export" # export code from notebooks into the library
+nbclean = "nbdev_clean" # remove extraneous notebook metadata to reduce git conflicts
+pysync = "nbdev_update" # sync changes from library to notebooks
+docmaker = "nbdev_docs" # build docs
+zettelmaker = "quarto render nbs/experiments --to gfm --no-execute --output-dir ../zettels --profile zettels" # export experiments to markdown with quarto
+notebooks = "jupyter lab --ip=0.0.0.0"
+
+[project.scripts]
+zettelfiles = "zettelfiles.server:main"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra -q"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]
+
