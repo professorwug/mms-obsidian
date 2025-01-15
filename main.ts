@@ -25,6 +25,7 @@ const DEFAULT_SETTINGS: MMSPluginSettings = {
 
 export default class MMSPlugin extends Plugin {
     settings: MMSPluginSettings;
+    private views: FileBrowserView[] = [];
 
     async onload() {
         await this.loadSettings();
@@ -32,7 +33,25 @@ export default class MMSPlugin extends Plugin {
         // Register the custom view type
         this.registerView(
             'folgezettel-browser',
-            (leaf: WorkspaceLeaf) => new FileBrowserView(leaf, this)
+            (leaf: WorkspaceLeaf) => {
+                const view = new FileBrowserView(leaf, this);
+                this.views.push(view);
+                return view;
+            }
+        );
+
+        // Register file system event handlers
+        this.registerEvent(
+            this.app.vault.on('create', () => this.refreshViews())
+        );
+        this.registerEvent(
+            this.app.vault.on('delete', () => this.refreshViews())
+        );
+        this.registerEvent(
+            this.app.vault.on('rename', () => this.refreshViews())
+        );
+        this.registerEvent(
+            this.app.vault.on('modify', () => this.refreshViews())
         );
 
         // Add a ribbon icon for the Folgezettel Browser
@@ -109,7 +128,7 @@ export default class MMSPlugin extends Plugin {
     }
 
     onunload() {
-
+        this.views = [];
     }
 
     async loadSettings() {
@@ -131,6 +150,15 @@ export default class MMSPlugin extends Plugin {
         }
 
         workspace.revealLeaf(leaf);
+    }
+
+    // Method to refresh all file browser views while preserving state
+    private refreshViews() {
+        this.views.forEach(view => {
+            if (view) {
+                view.refreshPreservingState();
+            }
+        });
     }
 }
 

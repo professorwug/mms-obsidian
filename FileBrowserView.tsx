@@ -221,13 +221,29 @@ interface FileBrowserComponentProps {
     folders: TFolder[];
     app: any;
     plugin: any;
+    initialExpandedPaths: Set<string>;
+    initialSelectedPath: string | null;
+    onStateChange?: (expandedPaths: Set<string>, selectedPath: string | null) => void;
 }
 
-const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({ files, folders, app, plugin }) => {
-    const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(new Set());
-    const [selectedPath, setSelectedPath] = React.useState<string | null>(null);
+const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({ 
+    files, 
+    folders, 
+    app, 
+    plugin,
+    initialExpandedPaths,
+    initialSelectedPath,
+    onStateChange
+}) => {
+    const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(initialExpandedPaths);
+    const [selectedPath, setSelectedPath] = React.useState<string | null>(initialSelectedPath);
 
     const graph = React.useMemo(() => buildFileGraph([...folders, ...files]), [files, folders]);
+
+    // Notify parent of state changes
+    React.useEffect(() => {
+        onStateChange?.(expandedPaths, selectedPath);
+    }, [expandedPaths, selectedPath]);
 
     const handleToggle = (path: string) => {
         const newExpandedPaths = new Set(expandedPaths);
@@ -325,6 +341,8 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({ files, fold
 export class FileBrowserView extends ItemView {
     private root: Root | null = null;
     private plugin: any;
+    private currentExpandedPaths: Set<string> = new Set();
+    private currentSelectedPath: string | null = null;
 
     constructor(leaf: WorkspaceLeaf, plugin: any) {
         super(leaf);
@@ -339,28 +357,58 @@ export class FileBrowserView extends ItemView {
         return 'Folgezettel Browser';
     }
 
-    async onOpen(): Promise<void> {
-        const container = this.containerEl.children[1];
-        container.empty();
-        
-        const files = this.app.vault.getFiles();
-        const folders = this.app.vault.getAllLoadedFiles().filter((f: any) => f instanceof TFolder);
+    // Method to preserve and restore view state during refresh
+    async refreshPreservingState() {
+        // Store current state before refresh
+        const expandedPaths = this.currentExpandedPaths;
+        const selectedPath = this.currentSelectedPath;
 
-        const reactComponent = createRoot(container);
-        this.root = reactComponent;
-        reactComponent.render(
-            <FileBrowserComponent 
-                files={files} 
-                folders={folders} 
+        // Get fresh file list and rebuild graph
+        const files = this.app.vault.getFiles();
+        const folders = this.app.vault.getAllLoadedFiles()
+            .filter(f => f instanceof TFolder) as TFolder[];
+        
+        // Re-render with preserved state
+        if (this.root) {
+            this.root.render(
+                <FileBrowserComponent
+                    files={files}
+                    folders={folders}
+                    app={this.app}
+                    plugin={this.plugin}
+                    initialExpandedPaths={expandedPaths}
+                    initialSelectedPath={selectedPath}
+                />
+            );
+        }
+    }
+
+    async onOpen() {
+        const files = this.app.vault.getFiles();
+        const folders = this.app.vault.getAllLoadedFiles()
+            .filter(f => f instanceof TFolder) as TFolder[];
+
+        this.root = createRoot(this.containerEl.children[1]);
+        this.root.render(
+            <FileBrowserComponent
+                files={files}
+                folders={folders}
                 app={this.app}
                 plugin={this.plugin}
+                initialExpandedPaths={new Set()}
+                initialSelectedPath={null}
+                onStateChange={(expandedPaths, selectedPath) => {
+                    this.currentExpandedPaths = expandedPaths;
+                    this.currentSelectedPath = selectedPath;
+                }}
             />
         );
     }
 
-    async onClose(): Promise<void> {
+    async onClose() {
         if (this.root) {
             this.root.unmount();
+            this.root = null;
         }
     }
 }
