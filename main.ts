@@ -1,4 +1,4 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf } from 'obsidian';
+import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, TFile, TFolder } from 'obsidian';
 import { FileBrowserView } from './FileBrowserView';
 import { FolgemoveModal } from './FolgemoveModal';
 import { getNextAvailableChildId } from './utils';
@@ -185,16 +185,16 @@ export default class MMSPlugin extends Plugin {
             const modal = new FolgemoveModal(this.app);
             modal.open();
             console.log("Modal opened, waiting for result...");
-            const targetFile = await modal.getResult();
-            console.log("Got target file:", targetFile?.path);
+            const target = await modal.getResult();
+            console.log("Got target:", target?.path);
             
-            if (!targetFile) {
-                console.log("No target file selected");
+            if (!target) {
+                console.log("No target selected");
                 return; // User cancelled
             }
 
-            // Get target directory
-            const targetDir = targetFile.parent;
+            // Get target directory - either the selected folder or the parent of the selected file
+            const targetDir = target instanceof TFolder ? target : target.parent;
             if (!targetDir) {
                 console.log("Invalid target location - no parent directory");
                 new Notice("Invalid target location");
@@ -209,9 +209,10 @@ export default class MMSPlugin extends Plugin {
                 return;
             }
 
-            // Get the source and target nodes
+            // Get the source and target nodes from the graph
             const sourceNode = fileBrowserView.currentGraph.nodes.get(sourceFile.path);
-            const targetNode = fileBrowserView.currentGraph.nodes.get(targetFile.path);
+            const targetNode = fileBrowserView.currentGraph.nodes.get(target.path);
+            
             if (!sourceNode) {
                 console.log("Source file not found in graph");
                 new Notice("Source file not found in graph");
@@ -220,13 +221,13 @@ export default class MMSPlugin extends Plugin {
 
             let finalPath: string;
             if (targetNode?.id) {
-                // If target has an ID, generate new ID and move directly to final location
-                const newId = getNextAvailableChildId(targetFile.path, fileBrowserView.currentGraph);
+                // If target has an ID (whether file or folder), generate new ID
+                const newId = getNextAvailableChildId(target.path, fileBrowserView.currentGraph);
                 const newName = `${newId} ${sourceNode.name}.md`;
                 finalPath = `${targetDir.path}/${newName}`;
                 console.log("Moving to final location with new ID:", finalPath);
             } else {
-                // If target has no ID, just move to new directory with original name
+                // If target has no ID, just move to directory with original name
                 finalPath = `${targetDir.path}/${sourceNode.name}.md`;
                 console.log("Moving to new directory:", finalPath);
             }

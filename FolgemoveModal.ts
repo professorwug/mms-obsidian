@@ -1,33 +1,40 @@
-import { App, FuzzySuggestModal, TFile } from 'obsidian';
+import { App, FuzzySuggestModal, TFile, TFolder, TAbstractFile } from 'obsidian';
 
-export class FolgemoveModal extends FuzzySuggestModal<TFile> {
-    private resolvePromise: ((value: TFile | null) => void) | null = null;
-    private items: TFile[];
+export class FolgemoveModal extends FuzzySuggestModal<TAbstractFile> {
+    private resolvePromise: ((value: TAbstractFile | null) => void) | null = null;
+    private items: TAbstractFile[];
 
     constructor(app: App) {
         super(app);
-        this.setPlaceholder("Type to search for destination file...");
-        this.items = this.app.vault.getFiles();
+        this.setPlaceholder("Type to search for destination file or folder...");
+        
+        // Get both files and folders
+        const files = this.app.vault.getFiles();
+        const folders = this.app.vault.getAllLoadedFiles()
+            .filter(f => f instanceof TFolder) as TFolder[];
+        
+        this.items = [...folders, ...files];
     }
 
-    getItems(): TFile[] {
+    getItems(): TAbstractFile[] {
         return this.items;
     }
 
-    getItemText(file: TFile): string {
-        return file.path;
+    getItemText(item: TAbstractFile): string {
+        // Add a prefix to distinguish folders
+        return item instanceof TFolder ? `📁 ${item.path}` : item.path;
     }
 
-    onChooseItem(file: TFile, evt: MouseEvent | KeyboardEvent): void {
-        console.log("File chosen:", file.path);
+    onChooseItem(item: TAbstractFile, evt: MouseEvent | KeyboardEvent): void {
+        console.log("Item chosen:", item.path);
         if (this.resolvePromise) {
-            console.log("Resolving with file");
-            this.resolvePromise(file);
+            console.log("Resolving with item");
+            this.resolvePromise(item);
             this.resolvePromise = null;
         }
     }
 
-    async getResult(): Promise<TFile | null> {
+    async getResult(): Promise<TAbstractFile | null> {
         console.log("Getting result...");
         return new Promise((resolve) => {
             console.log("Setting up promise...");
