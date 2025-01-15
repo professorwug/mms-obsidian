@@ -1,5 +1,7 @@
 import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf } from 'obsidian';
 import { FileBrowserView } from './FileBrowserView';
+import { FolgemoveModal } from './FolgemoveModal';
+import { getNextAvailableChildId } from './utils';
 
 // Remember to rename these classes and interfaces!
 
@@ -114,6 +116,21 @@ export default class MMSPlugin extends Plugin {
             }
         });
 
+        this.addCommand({
+            id: 'folgemove',
+            name: 'Folgemove - Move and rename file based on destination',
+            checkCallback: (checking: boolean) => {
+                const activeFile = this.app.workspace.getActiveFile();
+                if (!activeFile) return false;
+                
+                if (!checking) {
+                    this.folgemove(activeFile);
+                }
+                
+                return true;
+            }
+        });
+
         // This adds a settings tab so the user can configure various aspects of the plugin
         this.addSettingTab(new MMSSettingTab(this.app, this));
 
@@ -159,6 +176,60 @@ export default class MMSPlugin extends Plugin {
                 view.refreshPreservingState();
             }
         });
+    }
+
+    private async folgemove(sourceFile: TFile) {
+        try {
+            // Open modal to select destination
+            const modal = new FolgemoveModal(this.app);
+            modal.open();
+            const targetFile = await modal.getResult();
+            
+            if (!targetFile) {
+                return; // User cancelled
+            }
+
+            // Get target directory
+            const targetDir = targetFile.parent;
+            if (!targetDir) {
+                new Notice("Invalid target location");
+                return;
+            }
+
+            // Get current FileBrowserView instance to access the graph
+            const fileBrowserView = this.views.find(view => view instanceof FileBrowserView) as FileBrowserView;
+            if (!fileBrowserView?.currentGraph) {
+                new Notice("File browser not initialized");
+                return;
+            }
+
+            // First move the file to target directory
+            const newPath = `${targetDir.path}/${sourceFile.name}`;
+            await this.app.fileManager.renameFile(sourceFile, newPath);
+
+            // If target has a folgezettel ID, get new ID for source
+            const targetNode = fileBrowserView.currentGraph.nodes.get(targetFile.path);
+            if (targetNode?.id) {
+                const newId = getNextAvailableChildId(targetFile.path, fileBrowserView.currentGraph);
+                if (newId) {
+                    // Rename file with new ID
+                    const baseName = sourceFile.name.replace(/^\d+[a-z]\d*\s+/, ''); // Remove any existing ID
+                    const newName = `${newId} ${baseName}`;
+                    const finalPath = `${targetDir.path}/${newName}`;
+                    
+                    await this.app.fileManager.renameFile(
+                        this.app.vault.getAbstractFileByPath(newPath) as TFile,
+                        finalPath
+                    );
+                }
+            }
+
+            // The views will be automatically refreshed by the file system event handlers
+            new Notice("File moved successfully");
+        } catch (error) {
+            new Notice(`Error moving file: ${error.message}`);
+            console.error('Folgemove error:', error);
+        }
     }
 }
 
