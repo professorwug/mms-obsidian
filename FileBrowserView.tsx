@@ -34,7 +34,7 @@ const FileItem: React.FC<FileItemProps> = ({
     const displayName = node.id ? `${node.id} ${node.name}` : node.name;
     const isSelected = selectedPath === path;
 
-    const handleClick = (e: React.MouseEvent) => {
+    const handleClick = async (e: React.MouseEvent) => {
         console.log('Main item clicked:', path);
         e.stopPropagation();
         onSelect(path);
@@ -47,6 +47,70 @@ const FileItem: React.FC<FileItemProps> = ({
             console.log('Directory clicked, toggling expansion');
             if (hasChildren) {
                 onToggle(path);
+            }
+            return;
+        }
+
+        // For surrogate nodes, create a new markdown file
+        if (node.isSurrogate && node.id) {
+            console.log('Creating new file for surrogate node:', node.id);
+            console.log('Node path:', path);
+            
+            // Always expand surrogate nodes when clicked
+            if (hasChildren) {
+                onToggle(path);
+            }
+
+            // Recursively find first non-surrogate child
+            const findNonSurrogateChild = (nodePath: string, visited: Set<string> = new Set()): string | null => {
+                if (visited.has(nodePath)) return null; // Prevent infinite loops
+                visited.add(nodePath);
+
+                const childPaths = Array.from(graph.edges.get(nodePath) || []);
+                console.log('Checking children of:', nodePath, childPaths);
+
+                for (const childPath of childPaths) {
+                    const childNode = graph.nodes.get(childPath);
+                    if (!childNode) continue;
+
+                    if (!childNode.isSurrogate) {
+                        // Found a non-surrogate node, use its path
+                        const actualPath = Array.from(childNode.paths)[0];
+                        console.log('Found non-surrogate child:', actualPath);
+                        return actualPath;
+                    } else {
+                        // Recursively check this surrogate's children
+                        const result = findNonSurrogateChild(childPath, visited);
+                        if (result) return result;
+                    }
+                }
+                return null;
+            };
+
+            const actualChildPath = findNonSurrogateChild(path);
+            if (!actualChildPath) {
+                console.error('Could not find any non-surrogate children');
+                new Notice('Cannot create file: no non-surrogate children found');
+                return;
+            }
+
+            const targetDir = actualChildPath.split('/').slice(0, -1).join('/');
+            console.log('Using directory from non-surrogate child:', targetDir);
+
+            const newFilePath = targetDir ? `${targetDir}/${node.id} Placeholder.md` : `${node.id} Placeholder.md`;
+            console.log('Creating file at:', newFilePath);
+            
+            try {
+                await app.vault.create(newFilePath, '');
+                console.log('Created new file:', newFilePath);
+                // Open the new file in a new tab
+                const file = app.vault.getAbstractFileByPath(newFilePath);
+                if (file instanceof TFile) {
+                    await app.workspace.getLeaf('tab').openFile(file);
+                }
+            } catch (error) {
+                console.error('Error creating file:', error);
+                new Notice(`Error creating file: ${error.message}`);
             }
             return;
         }
@@ -192,22 +256,31 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({ files, fold
 
         console.log('Processing file with extension:', extension);
         const command = plugin.settings.fileTypeCommands[extension];
+        console.log('Found command from settings:', command);
         
         if (extension === 'md' || extension === 'pdf' || !command) {
-            // Default behavior: open in Obsidian
+            // Default behavior: open in Obsidian in a new tab
             console.log('Opening in Obsidian:', path);
             const file = app.vault.getAbstractFileByPath(path);
             if (file instanceof TFile) {
-                await app.workspace.getLeaf().openFile(file);
+                await app.workspace.getLeaf('tab').openFile(file);
             }
         } else {
-            // Run the configured command
-            console.log('Running command:', command, 'with path:', path);
+            // Get absolute path by combining vault path with relative path
+            const vaultPath = app.vault.adapter.getBasePath();
+            const absolutePath = `${vaultPath}/${path}`;
+            console.log('Converting to absolute path:', absolutePath);
+
+            // Run the configured command with absolute path
+            const finalCommand = command.replace('$FILEPATH', absolutePath);
+            console.log('Running command:', finalCommand);
             const { exec } = require('child_process');
-            exec(`${command} "${path}"`, (error: any) => {
+            exec(finalCommand, (error: any) => {
                 if (error) {
                     console.error('Command error:', error);
                     new Notice(`Error running command: ${error.message}`);
+                } else {
+                    console.log('Command executed successfully');
                 }
             });
         }

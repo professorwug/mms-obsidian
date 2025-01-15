@@ -15,10 +15,10 @@ interface MMSPluginSettings {
 
 const DEFAULT_SETTINGS: MMSPluginSettings = {
     fileTypeCommands: {
-        py: '',
-        ipynb: '',
-        qmd: '',
-        nb: '',
+        py: 'code "$FILEPATH"',
+        ipynb: 'code "$FILEPATH"',
+        qmd: 'code "$FILEPATH"',
+        nb: 'open "$FILEPATH"',
         pdf: '',
     }
 }
@@ -114,6 +114,7 @@ export default class MMSPlugin extends Plugin {
 
     async loadSettings() {
         this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+        console.log('Loaded settings:', this.settings);
     }
 
     async saveSettings() {
@@ -163,7 +164,7 @@ class MMSSettingTab extends PluginSettingTab {
 
         containerEl.createEl('h2', { text: 'File Type Actions' });
         containerEl.createEl('p', { text: 'Configure commands to run when clicking different file types. Leave empty to use default behavior.' });
-        containerEl.createEl('p', { text: 'The file path will be passed as an argument to your command.' });
+        containerEl.createEl('p', { text: 'Use $FILEPATH in your command where you want the file path to be inserted. For example: code "$FILEPATH" or open -a "Preview" "$FILEPATH"' });
 
         const fileTypes = ['py', 'ipynb', 'qmd', 'nb', 'pdf'];
 

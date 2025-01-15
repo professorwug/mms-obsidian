@@ -53,11 +53,15 @@ If your plugin does not need CSS, delete this file.
 }
 
 .file-item-content.is-selected {
-    background-color: var(--background-modifier-success);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
 }
 
 .file-browser-container:focus .file-item-content.is-selected {
-    background-color: var(--background-modifier-success-hover);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
 }
 
 .file-item .collapse-icon {
