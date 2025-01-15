@@ -1,71 +1,49 @@
-import { App, Modal, TFile } from 'obsidian';
+import { App, FuzzySuggestModal, TFile } from 'obsidian';
 
-export class FolgemoveModal extends Modal {
-    private result: TFile | null = null;
-    private resolved: boolean = false;
+export class FolgemoveModal extends FuzzySuggestModal<TFile> {
+    private resolvePromise: ((value: TFile | null) => void) | null = null;
+    private items: TFile[];
 
     constructor(app: App) {
         super(app);
+        this.setPlaceholder("Type to search for destination file...");
+        this.items = this.app.vault.getFiles();
     }
 
-    onOpen() {
-        const { contentEl } = this;
-        contentEl.createEl("h2", { text: "Select destination file or folder" });
-
-        // Create search input
-        const inputEl = contentEl.createEl("input", {
-            type: "text",
-            placeholder: "Type to search files...",
-        });
-        
-        // Create results container
-        const resultsEl = contentEl.createEl("div");
-        
-        // Handle input changes
-        inputEl.addEventListener("input", async () => {
-            const query = inputEl.value.toLowerCase();
-            const files = this.app.vault.getFiles();
-            
-            // Clear previous results
-            resultsEl.empty();
-            
-            // Filter and display matching files
-            files.filter(file => 
-                file.path.toLowerCase().contains(query)
-            ).forEach(file => {
-                const resultEl = resultsEl.createEl("div", {
-                    text: file.path,
-                    cls: "suggestion-item",
-                });
-                
-                resultEl.addEventListener("click", () => {
-                    this.result = file;
-                    this.resolved = true;
-                    this.close();
-                });
-            });
-        });
-
-        // Focus input
-        inputEl.focus();
+    getItems(): TFile[] {
+        return this.items;
     }
 
-    onClose() {
-        const { contentEl } = this;
-        contentEl.empty();
+    getItemText(file: TFile): string {
+        return file.path;
+    }
+
+    onChooseItem(file: TFile, evt: MouseEvent | KeyboardEvent): void {
+        console.log("File chosen:", file.path);
+        if (this.resolvePromise) {
+            console.log("Resolving with file");
+            this.resolvePromise(file);
+            this.resolvePromise = null;
+        }
     }
 
     async getResult(): Promise<TFile | null> {
+        console.log("Getting result...");
         return new Promise((resolve) => {
-            this.resolved = false;
-            this.result = null;
+            console.log("Setting up promise...");
+            this.resolvePromise = resolve;
             
-            const interval = setInterval(() => {
-                if (this.resolved) {
-                    clearInterval(interval);
-                    resolve(this.result);
+            // Set up a one-time close handler that resolves with null if no item was selected
+            const closeHandler = () => {
+                console.log("Close handler triggered");
+                if (this.resolvePromise) {
+                    console.log("Resolving with null due to close");
+                    this.resolvePromise(null);
+                    this.resolvePromise = null;
                 }
-            }, 100);
+                this.modalEl.removeEventListener('closed', closeHandler);
+            };
+            this.modalEl.addEventListener('closed', closeHandler);
         });
     }
 }

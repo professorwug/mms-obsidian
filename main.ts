@@ -180,18 +180,23 @@ export default class MMSPlugin extends Plugin {
 
     private async folgemove(sourceFile: TFile) {
         try {
+            console.log("Starting folgemove for:", sourceFile.path);
             // Open modal to select destination
             const modal = new FolgemoveModal(this.app);
             modal.open();
+            console.log("Modal opened, waiting for result...");
             const targetFile = await modal.getResult();
+            console.log("Got target file:", targetFile?.path);
             
             if (!targetFile) {
+                console.log("No target file selected");
                 return; // User cancelled
             }
 
             // Get target directory
             const targetDir = targetFile.parent;
             if (!targetDir) {
+                console.log("Invalid target location - no parent directory");
                 new Notice("Invalid target location");
                 return;
             }
@@ -199,36 +204,39 @@ export default class MMSPlugin extends Plugin {
             // Get current FileBrowserView instance to access the graph
             const fileBrowserView = this.views.find(view => view instanceof FileBrowserView) as FileBrowserView;
             if (!fileBrowserView?.currentGraph) {
+                console.log("File browser not initialized");
                 new Notice("File browser not initialized");
                 return;
             }
 
-            // First move the file to target directory
-            const newPath = `${targetDir.path}/${sourceFile.name}`;
-            await this.app.fileManager.renameFile(sourceFile, newPath);
-
-            // If target has a folgezettel ID, get new ID for source
+            // Get the source and target nodes
+            const sourceNode = fileBrowserView.currentGraph.nodes.get(sourceFile.path);
             const targetNode = fileBrowserView.currentGraph.nodes.get(targetFile.path);
-            if (targetNode?.id) {
-                const newId = getNextAvailableChildId(targetFile.path, fileBrowserView.currentGraph);
-                if (newId) {
-                    // Rename file with new ID
-                    const baseName = sourceFile.name.replace(/^\d+[a-z]\d*\s+/, ''); // Remove any existing ID
-                    const newName = `${newId} ${baseName}`;
-                    const finalPath = `${targetDir.path}/${newName}`;
-                    
-                    await this.app.fileManager.renameFile(
-                        this.app.vault.getAbstractFileByPath(newPath) as TFile,
-                        finalPath
-                    );
-                }
+            if (!sourceNode) {
+                console.log("Source file not found in graph");
+                new Notice("Source file not found in graph");
+                return;
             }
 
-            // The views will be automatically refreshed by the file system event handlers
+            let finalPath: string;
+            if (targetNode?.id) {
+                // If target has an ID, generate new ID and move directly to final location
+                const newId = getNextAvailableChildId(targetFile.path, fileBrowserView.currentGraph);
+                const newName = `${newId} ${sourceNode.name}.md`;
+                finalPath = `${targetDir.path}/${newName}`;
+                console.log("Moving to final location with new ID:", finalPath);
+            } else {
+                // If target has no ID, just move to new directory with original name
+                finalPath = `${targetDir.path}/${sourceNode.name}.md`;
+                console.log("Moving to new directory:", finalPath);
+            }
+
+            await this.app.fileManager.renameFile(sourceFile, finalPath);
             new Notice("File moved successfully");
+            
         } catch (error) {
-            new Notice(`Error moving file: ${error.message}`);
             console.error('Folgemove error:', error);
+            new Notice(`Error moving file: ${error.message}`);
         }
     }
 }
