@@ -1,13 +1,13 @@
 import { ItemView, TFile, TFolder, WorkspaceLeaf } from 'obsidian';
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
-import { buildFileGraph } from './FileGraph';
+import { buildFileGraph, FileGraph } from './FileGraph';
 
 interface FileItemProps {
     path: string;
     depth: number;
     children: string[];
-    graph: ReturnType<typeof buildFileGraph>;
+    graph: FileGraph;
     onToggle: (path: string) => void;
     expandedPaths: Set<string>;
     selectedPath: string | null;
@@ -61,6 +61,9 @@ const FileItem: React.FC<FileItemProps> = ({
                 onToggle(path);
             }
 
+            // Store the expansion state of the surrogate node before creating the placeholder
+            const wasExpanded = expandedPaths.has(path);
+
             // Recursively find first non-surrogate child
             const findNonSurrogateChild = (nodePath: string, visited: Set<string> = new Set()): string | null => {
                 if (visited.has(nodePath)) return null; // Prevent infinite loops
@@ -103,6 +106,20 @@ const FileItem: React.FC<FileItemProps> = ({
             try {
                 await app.vault.create(newFilePath, '');
                 console.log('Created new file:', newFilePath);
+
+                // If the surrogate was expanded, expand the new placeholder file
+                // We need to wait a moment for the file system event to trigger and the graph to update
+                if (wasExpanded) {
+                    setTimeout(() => {
+                        const newExpandedPaths = new Set(expandedPaths);
+                        // Remove the surrogate path
+                        newExpandedPaths.delete(path);
+                        // Add the new placeholder path
+                        newExpandedPaths.add(newFilePath);
+                        setExpandedPaths(newExpandedPaths);
+                    }, 100);
+                }
+
                 // Open the new file in a new tab
                 const file = app.vault.getAbstractFileByPath(newFilePath);
                 if (file instanceof TFile) {
@@ -223,7 +240,7 @@ interface FileBrowserComponentProps {
     plugin: any;
     initialExpandedPaths: Set<string>;
     initialSelectedPath: string | null;
-    onStateChange?: (expandedPaths: Set<string>, selectedPath: string | null) => void;
+    onStateChange?: (expandedPaths: Set<string>, selectedPath: string | null, graph: FileGraph) => void;
 }
 
 const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({ 
@@ -237,13 +254,12 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
 }) => {
     const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(initialExpandedPaths);
     const [selectedPath, setSelectedPath] = React.useState<string | null>(initialSelectedPath);
-
     const graph = React.useMemo(() => buildFileGraph([...folders, ...files]), [files, folders]);
 
     // Notify parent of state changes
     React.useEffect(() => {
-        onStateChange?.(expandedPaths, selectedPath);
-    }, [expandedPaths, selectedPath]);
+        onStateChange?.(expandedPaths, selectedPath, graph);
+    }, [expandedPaths, selectedPath, graph]);
 
     const handleToggle = (path: string) => {
         const newExpandedPaths = new Set(expandedPaths);
@@ -343,6 +359,7 @@ export class FileBrowserView extends ItemView {
     private plugin: any;
     private currentExpandedPaths: Set<string> = new Set();
     private currentSelectedPath: string | null = null;
+    private currentGraph: FileGraph | null = null;
 
     constructor(leaf: WorkspaceLeaf, plugin: any) {
         super(leaf);
@@ -362,11 +379,47 @@ export class FileBrowserView extends ItemView {
         // Store current state before refresh
         const expandedPaths = this.currentExpandedPaths;
         const selectedPath = this.currentSelectedPath;
+        const oldGraph = this.currentGraph;
 
         // Get fresh file list and rebuild graph
         const files = this.app.vault.getFiles();
         const folders = this.app.vault.getAllLoadedFiles()
             .filter(f => f instanceof TFolder) as TFolder[];
+        
+        // Build new graph to check for surrogate->placeholder transitions
+        const newGraph = buildFileGraph([...folders, ...files]);
+        
+        // Create a map of surrogate paths to their corresponding placeholder paths
+        const surrogateToPlaceholder = new Map<string, string>();
+        if (oldGraph) {
+            expandedPaths.forEach(path => {
+                const oldNode = oldGraph.nodes.get(path);
+                if (oldNode?.isSurrogate && oldNode.id) {
+                    // Look for a placeholder file with this ID in the new graph
+                    const placeholderPath = Array.from(newGraph.nodes.entries()).find(([_, node]) => 
+                        !node.isSurrogate && 
+                        node.path.endsWith(`${oldNode.id} Placeholder.md`)
+                    )?.[0];
+                    
+                    if (placeholderPath) {
+                        surrogateToPlaceholder.set(path, placeholderPath);
+                    }
+                }
+            });
+        }
+
+        // Update expanded paths to use placeholder paths instead of surrogate paths
+        const updatedExpandedPaths = new Set<string>();
+        expandedPaths.forEach(path => {
+            const newPath = surrogateToPlaceholder.get(path) || path;
+            updatedExpandedPaths.add(newPath);
+        });
+
+        // Update selected path if it was a surrogate that's now a placeholder
+        let updatedSelectedPath = selectedPath;
+        if (selectedPath) {
+            updatedSelectedPath = surrogateToPlaceholder.get(selectedPath) || selectedPath;
+        }
         
         // Re-render with preserved state
         if (this.root) {
@@ -376,8 +429,13 @@ export class FileBrowserView extends ItemView {
                     folders={folders}
                     app={this.app}
                     plugin={this.plugin}
-                    initialExpandedPaths={expandedPaths}
-                    initialSelectedPath={selectedPath}
+                    initialExpandedPaths={updatedExpandedPaths}
+                    initialSelectedPath={updatedSelectedPath}
+                    onStateChange={(expandedPaths, selectedPath, graph) => {
+                        this.currentExpandedPaths = expandedPaths;
+                        this.currentSelectedPath = selectedPath;
+                        this.currentGraph = graph;
+                    }}
                 />
             );
         }
@@ -397,9 +455,10 @@ export class FileBrowserView extends ItemView {
                 plugin={this.plugin}
                 initialExpandedPaths={new Set()}
                 initialSelectedPath={null}
-                onStateChange={(expandedPaths, selectedPath) => {
+                onStateChange={(expandedPaths, selectedPath, graph) => {
                     this.currentExpandedPaths = expandedPaths;
                     this.currentSelectedPath = selectedPath;
+                    this.currentGraph = graph;
                 }}
             />
         );
