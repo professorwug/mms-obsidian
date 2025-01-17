@@ -1,7 +1,8 @@
-import { ItemView, TFile, TFolder, WorkspaceLeaf } from 'obsidian';
+import { ItemView, TFile, TFolder, WorkspaceLeaf, Menu, TAbstractFile } from 'obsidian';
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import { buildFileGraph, FileGraph } from './FileGraph';
+import MMSPlugin from './main';
 
 interface FileItemProps {
     path: string;
@@ -13,6 +14,7 @@ interface FileItemProps {
     selectedPath: string | null;
     onSelect: (path: string) => void;
     onFileClick: (path: string) => void;
+    plugin: MMSPlugin;
 }
 
 const FileItem: React.FC<FileItemProps> = ({ 
@@ -24,7 +26,8 @@ const FileItem: React.FC<FileItemProps> = ({
     expandedPaths,
     selectedPath,
     onSelect,
-    onFileClick
+    onFileClick,
+    plugin
 }) => {
     const node = graph.nodes.get(path);
     if (!node) return null;
@@ -163,6 +166,29 @@ const FileItem: React.FC<FileItemProps> = ({
         }
     };
 
+    const handleContextMenu = (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        const menu = new Menu();
+
+        if (!node.isDirectory) {
+            menu.addItem(item => 
+                item
+                    .setTitle("Create Follow Up Note")
+                    .setIcon("plus")
+                    .onClick(() => {
+                        const file = plugin.app.vault.getAbstractFileByPath(path);
+                        if (file instanceof TFile) {
+                            plugin.createFollowUpNote(file);
+                        }
+                    })
+            );
+        }
+
+        menu.showAtMouseEvent(e as any);
+    };
+
     const handleExtensionClick = (e: React.MouseEvent, ext: string) => {
         console.log('Extension click handler start:', ext);
         e.stopPropagation();
@@ -189,6 +215,7 @@ const FileItem: React.FC<FileItemProps> = ({
                         node.nodeType ? `is-${node.nodeType}-node` : ''
                     }`}
                     onClick={handleClick}
+                    onContextMenu={handleContextMenu}
                 >
                     {hasChildren && (
                         <span className={`collapse-icon ${expanded ? 'expanded' : ''}`}>
@@ -255,6 +282,7 @@ const FileItem: React.FC<FileItemProps> = ({
                                     selectedPath={selectedPath}
                                     onSelect={onSelect}
                                     onFileClick={onFileClick}
+                                    plugin={plugin}
                                 />
                             );
                         })}
@@ -268,7 +296,7 @@ interface FileBrowserComponentProps {
     files: TFile[];
     folders: TFolder[];
     app: any;
-    plugin: any;
+    plugin: MMSPlugin;
     initialExpandedPaths: Set<string>;
     initialSelectedPath: string | null;
     onStateChange?: (expandedPaths: Set<string>, selectedPath: string | null, graph: FileGraph) => void;
@@ -377,6 +405,7 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                             selectedPath={selectedPath}
                             onSelect={setSelectedPath}
                             onFileClick={handleFileClick}
+                            plugin={plugin}
                         />
                     );
                 })}
@@ -387,12 +416,12 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
 
 export class FileBrowserView extends ItemView {
     private root: Root | null = null;
-    private plugin: any;
+    private plugin: MMSPlugin;
     private currentExpandedPaths: Set<string> = new Set();
     private currentSelectedPath: string | null = null;
     private currentGraph: FileGraph | null = null;
 
-    constructor(leaf: WorkspaceLeaf, plugin: any) {
+    constructor(leaf: WorkspaceLeaf, plugin: MMSPlugin) {
         super(leaf);
         this.plugin = plugin;
     }
