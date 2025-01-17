@@ -121,3 +121,44 @@ If your plugin does not need CSS, delete this file.
     font-weight: normal;
     flex-shrink: 0;
 }
+
+/* Special node types */
+.node-type-indicator {
+    margin-left: 4px;
+    font-weight: bold;
+    opacity: 0.8;
+}
+
+.node-type-indicator.mapping {
+    color: var(--text-accent);
+}
+
+.node-type-indicator.planning {
+    color: var(--text-success);
+}
+
+/* Special nodes */
+.file-item-content.is-mapping-node {
+    color: var(--text-accent);
+    opacity: 0.8;
+}
+
+.file-item-content.is-planning-node {
+    color: var(--text-success);
+    opacity: 0.8;
+}
+
+/* Make sure extensions are still readable on special nodes */
+.file-item-content.is-mapping-node .file-extensions,
+.file-item-content.is-planning-node .file-extensions {
+    opacity: 0.8;
+    color: var(--text-muted);
+}
+
+.file-item-content.is-mapping {
+    color: var(--text-accent);
+}
+
+.file-item-content.is-planning {
+    color: var(--text-success);
+}

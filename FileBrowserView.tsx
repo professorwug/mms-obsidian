@@ -34,6 +34,16 @@ const FileItem: React.FC<FileItemProps> = ({
     const displayName = node.id ? `${node.id} ${node.name}` : node.name;
     const isSelected = selectedPath === path;
 
+    // Check if this node has any mapping or planning children
+    const hasMappingChild = hasChildren && children.some(childPath => {
+        const childNode = graph.nodes.get(childPath);
+        return childNode?.nodeType === 'mapping';
+    });
+    const hasPlanningChild = hasChildren && children.some(childPath => {
+        const childNode = graph.nodes.get(childPath);
+        return childNode?.nodeType === 'planning';
+    });
+
     const handleClick = async (e: React.MouseEvent) => {
         console.log('Main item clicked:', path);
         e.stopPropagation();
@@ -175,7 +185,9 @@ const FileItem: React.FC<FileItemProps> = ({
             <div className={`file-item ${hasChildren ? 'has-children' : ''} ${node.isDirectory ? 'is-folder' : ''}`}>
                 <div className="file-item-indent" style={{ width: `${depth * 20}px` }} />
                 <div 
-                    className={`file-item-content ${isSelected ? 'is-selected' : ''}`}
+                    className={`file-item-content ${isSelected ? 'is-selected' : ''} ${
+                        node.nodeType ? `is-${node.nodeType}-node` : ''
+                    }`}
                     onClick={handleClick}
                 >
                     {hasChildren && (
@@ -184,7 +196,11 @@ const FileItem: React.FC<FileItemProps> = ({
                         </span>
                     )}
                     <div className="file-name-container">
-                        <span className="file-name">{displayName}</span>
+                        <span className="file-name">
+                            {displayName}
+                            {hasMappingChild && <span className="node-type-indicator mapping">#</span>}
+                            {hasPlanningChild && <span className="node-type-indicator planning">&</span>}
+                        </span>
                         {!node.isDirectory && node.extensions.size > 0 && (
                             <div 
                                 className="file-extensions"
@@ -208,27 +224,42 @@ const FileItem: React.FC<FileItemProps> = ({
                     </div>
                 </div>
             </div>
-            {expanded && hasChildren && children.map(childPath => {
-                const childNode = graph.nodes.get(childPath);
-                if (!childNode) return null;
-                
-                const grandchildren = Array.from(graph.edges.get(childPath) || new Set());
-                
-                return (
-                    <FileItem
-                        key={childPath}
-                        path={childPath}
-                        depth={depth + 1}
-                        children={grandchildren}
-                        graph={graph}
-                        onToggle={onToggle}
-                        expandedPaths={expandedPaths}
-                        selectedPath={selectedPath}
-                        onSelect={onSelect}
-                        onFileClick={onFileClick}
-                    />
-                );
-            })}
+            {expanded && hasChildren && (
+                <div className="file-item-children">
+                    {Array.from(graph.edges.get(path) || [])
+                        .sort((a, b) => {
+                            const nodeA = graph.nodes.get(a);
+                            const nodeB = graph.nodes.get(b);
+                            if (!nodeA || !nodeB) return 0;
+
+                            // Sort by full display name (ID + name)
+                            const displayNameA = nodeA.id ? `${nodeA.id} ${nodeA.name}` : nodeA.name;
+                            const displayNameB = nodeB.id ? `${nodeB.id} ${nodeB.name}` : nodeB.name;
+                            return displayNameA.localeCompare(displayNameB);
+                        })
+                        .map(childPath => {
+                            const childNode = graph.nodes.get(childPath);
+                            if (!childNode) return null;
+
+                            const children = Array.from(graph.edges.get(childPath) || new Set());
+                            
+                            return (
+                                <FileItem
+                                    key={childPath}
+                                    path={childPath}
+                                    depth={depth + 1}
+                                    children={children}
+                                    graph={graph}
+                                    onToggle={onToggle}
+                                    expandedPaths={expandedPaths}
+                                    selectedPath={selectedPath}
+                                    onSelect={onSelect}
+                                    onFileClick={onFileClick}
+                                />
+                            );
+                        })}
+                </div>
+            )}
         </>
     );
 };

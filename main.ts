@@ -1,7 +1,9 @@
 import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, TFile, TFolder } from 'obsidian';
 import { FileBrowserView } from './FileBrowserView';
 import { FolgemoveModal } from './FolgemoveModal';
+import { FollowUpModal } from './FollowUpModal';
 import { getNextAvailableChildId } from './utils';
+import { FileGraph, buildFileGraph } from './FileGraph';
 
 // Remember to rename these classes and interfaces!
 
@@ -28,6 +30,7 @@ const DEFAULT_SETTINGS: MMSPluginSettings = {
 export default class MMSPlugin extends Plugin {
     settings: MMSPluginSettings;
     private views: FileBrowserView[] = [];
+    private fileGraph: FileGraph;
 
     async onload() {
         await this.loadSettings();
@@ -127,6 +130,21 @@ export default class MMSPlugin extends Plugin {
                     this.folgemove(activeFile);
                 }
                 
+                return true;
+            }
+        });
+
+        // Add Create Follow Up Note command
+        this.addCommand({
+            id: 'create-follow-up-note',
+            name: 'Create Follow Up Note',
+            checkCallback: (checking: boolean) => {
+                const activeFile = this.app.workspace.getActiveFile();
+                if (!activeFile) return false;
+
+                if (checking) return true;
+
+                this.createFollowUpNote(activeFile);
                 return true;
             }
         });
@@ -238,6 +256,58 @@ export default class MMSPlugin extends Plugin {
         } catch (error) {
             console.error('Folgemove error:', error);
             new Notice(`Error moving file: ${error.message}`);
+        }
+    }
+
+    async createFollowUpNote(activeFile: TFile) {
+        try {
+            // Ensure graph is initialized
+            if (!this.fileGraph) {
+                const files = this.app.vault.getFiles();
+                const folders = this.app.vault.getAllLoadedFiles().filter(f => f instanceof TFolder) as TFolder[];
+                const items = [...files, ...folders];
+                this.fileGraph = buildFileGraph(items);
+            }
+
+            // Get parent node from graph
+            const parentPath = activeFile.path;
+            const parentNode = this.fileGraph.nodes.get(parentPath);
+            if (!parentNode || !parentNode.id) {
+                new Notice('Parent note must have an ID');
+                return;
+            }
+
+            // Show modal to get note name and type
+            const modal = new FollowUpModal(this.app);
+            const result = await modal.openAndGetValue();
+            if (!result) return; // User cancelled
+
+            // Get ID based on note type
+            let newId: string;
+            if (result.type === 'searching') {
+                // For searching notes, get next available child ID
+                newId = getNextAvailableChildId(parentPath, this.fileGraph);
+                if (!newId) {
+                    new Notice('Could not generate child ID');
+                    return;
+                }
+            } else {
+                // For mapping and planning notes, use parent's ID with appropriate suffix
+                newId = result.type === 'mapping' ? `${parentNode.id}#` : `${parentNode.id}&`;
+            }
+
+            // Create the new file
+            const newFileName = `${newId} ${result.name}.md`;
+            const newFilePath = `${activeFile.parent?.path ?? ''}/${newFileName}`;
+            
+            const newFile = await this.app.vault.create(newFilePath, '');
+            new Notice(`Created ${result.type} note: ${newFileName}`);
+            
+            // Open the new file in a new tab
+            await this.app.workspace.getLeaf('tab').openFile(newFile);
+        } catch (error) {
+            console.error('Error creating follow up note:', error);
+            new Notice('Error creating follow up note');
         }
     }
 }

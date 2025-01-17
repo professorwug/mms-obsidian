@@ -4,6 +4,7 @@ interface GraphNode {
     path: string;          // Primary path (first file found)
     name: string;          // Display name (without ID if present)
     id?: string;          // Folgezettel ID if present
+    nodeType?: 'mapping' | 'planning';  // Special node types
     extensions: Set<string>; // All file extensions for this node
     isDirectory: boolean;  // Is this a folder?
     isSurrogate: boolean; // Is this a surrogate node for a missing parent?
@@ -172,11 +173,19 @@ export function buildFileGraph(items: Array<TFile | TFolder>): FileGraph {
         const id = parts.length > 1 && isValidNodeId(firstWord) ? firstWord : undefined;
         const name = id ? parts.slice(1).join(' ') : basename;
 
+        // Determine node type based on ID suffix
+        let nodeType: 'mapping' | 'planning' | undefined;
+        if (id) {
+            if (id.endsWith('#')) nodeType = 'mapping';
+            else if (id.endsWith('&')) nodeType = 'planning';
+        }
+
         if (isDirectory) {
             const node: GraphNode = {
                 path: item.path,
                 name,
                 id,
+                nodeType,
                 isDirectory: true,
                 isSurrogate: false,
                 extensions: new Set(),
@@ -199,6 +208,7 @@ export function buildFileGraph(items: Array<TFile | TFolder>): FileGraph {
                     path: file.path,
                     name,
                     id,
+                    nodeType,
                     isDirectory: false,
                     isSurrogate: false,
                     extensions: new Set([file.extension]),
