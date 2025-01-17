@@ -89,18 +89,18 @@ function addParentEdgesToGraph(
     graph: FileGraph, 
     originalParentPath?: string // Optional: physical parent folder path
 ): void {
-    // Check for Folgezettel ID
     let addedEdge = false;
 
     if (node.id) {
         const parentId = getParentId(node.id);
         if (parentId) {
-            // Find or create parent node
-            let parentNode = Array.from(graph.nodes.values())
-                .find(n => n.id === parentId);
+            // First check if the physical parent folder has this ID
+            const parentFolder = originalParentPath ? graph.nodes.get(originalParentPath) : null;
+            let parentNode = parentFolder?.id === parentId ? parentFolder : 
+                Array.from(graph.nodes.values()).find(n => n.id === parentId);
 
             if (!parentNode) {
-                // Create surrogate node
+                // Create surrogate node only if we couldn't find a matching folder
                 const surrogatePath = `__surrogate_${parentId}`;
                 parentNode = {
                     path: surrogatePath,
@@ -126,14 +126,16 @@ function addParentEdgesToGraph(
         }
     }
 
-    // If no Folgezettel edge added and we have a parent folder path, add folder edge
+    // Only add folder edge if:
+    // 1. We haven't added an edge yet (no Folgezettel parent found)
+    // 2. The folder isn't already the Folgezettel parent (would be redundant)
     if (!addedEdge && originalParentPath && originalParentPath !== '/') {
         if (!graph.edges.has(originalParentPath)) {
             graph.edges.set(originalParentPath, new Set());
         }
         graph.edges.get(originalParentPath)!.add(node.path);
     } else if (!addedEdge) {
-        // If no edges added, this should be a child of root
+        // If no edges added at all, this should be a child of root
         graph.edges.get('/')!.add(node.path);
     }
 }
