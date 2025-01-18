@@ -119,18 +119,25 @@ export default class MMSPlugin extends Plugin {
             }
         });
 
+        // Add Folgemove command
         this.addCommand({
             id: 'folgemove',
-            name: 'Folgemove - Move and rename file based on destination',
-            checkCallback: (checking: boolean) => {
+            name: 'Folgemove - Move file and its descendants',
+            callback: async () => {
                 const activeFile = this.app.workspace.getActiveFile();
-                if (!activeFile) return false;
-                
-                if (!checking) {
-                    this.folgemove(activeFile);
+                if (!activeFile) {
+                    new Notice('No active file');
+                    return;
                 }
+
+                // Open modal to select destination
+                const modal = new FolgemoveModal(this.app);
+                modal.open();
+                const target = await modal.getResult();
                 
-                return true;
+                if (!target) return; // User cancelled
+
+                await this.folgemove(activeFile, target.path);
             }
         });
 
@@ -196,82 +203,203 @@ export default class MMSPlugin extends Plugin {
         });
     }
 
-    private async folgemove(sourceFile: TFile) {
+    private getActiveGraph(): FileGraph {
+        const fileBrowserView = this.views.find(view => view instanceof FileBrowserView) as FileBrowserView;
+        if (!fileBrowserView?.currentGraph) {
+            throw new Error('File browser not initialized');
+        }
+        return fileBrowserView.currentGraph;
+    }
+
+    private async waitForGraphUpdate(timeout = 2000): Promise<void> {
+        console.log(`[WaitForGraph] Waiting for graph update`);
+        const fileBrowserView = this.views.find(view => view instanceof FileBrowserView) as FileBrowserView;
+        if (!fileBrowserView) {
+            throw new Error('File browser not initialized');
+        }
+
+        return new Promise((resolve, reject) => {
+            let timeoutId: NodeJS.Timeout;
+            
+            // Function to clean up listeners
+            const cleanup = () => {
+                clearTimeout(timeoutId);
+                fileBrowserView.app.workspace.off('file-menu', menuHandler);
+                fileBrowserView.app.vault.off('rename', renameHandler);
+            };
+
+            // Set timeout
+            timeoutId = setTimeout(() => {
+                cleanup();
+                reject(new Error('Timeout waiting for graph update'));
+            }, timeout);
+
+            // Handler for file menu events
+            const menuHandler = () => {
+                cleanup();
+                resolve();
+            };
+
+            // Handler for rename events
+            const renameHandler = () => {
+                cleanup();
+                resolve();
+            };
+
+            // Register event listeners
+            fileBrowserView.app.workspace.on('file-menu', menuHandler);
+            fileBrowserView.app.vault.on('rename', renameHandler);
+        });
+    }
+
+    async folgemove(source: TAbstractFile, targetPath: string) {
         try {
-            console.log("Starting folgemove for:", sourceFile.path);
-            // Open modal to select destination
-            const modal = new FolgemoveModal(this.app);
-            modal.open();
-            console.log("Modal opened, waiting for result...");
-            const target = await modal.getResult();
-            console.log("Got target:", target?.path);
+            console.log(`[Folgemove] Starting move of ${source.path} to ${targetPath}`);
+            const graph = this.getActiveGraph();
+
+            // Get target node
+            const targetNode = graph.nodes.get(targetPath);
+            if (!targetNode) {
+                throw new Error(`Target node ${targetPath} not found in graph`);
+            }
+
+            // Get all children BEFORE moving the source node
+            console.log(`[Folgemove] Getting children before moving source`);
+            const children = this.getChildrenToMove(source.path);
+            console.log(`[Folgemove] Found ${children.length} children to move:`, children.map(c => c.path));
+
+            // Move the source node and get its new path
+            console.log(`[Folgemove] Moving source node ${source.path}`);
+            const newPath = await this.moveSingleNode(source, targetPath);
+            if (!newPath) {
+                throw new Error('Failed to move source node');
+            }
+            console.log(`[Folgemove] Source node moved to ${newPath}`);
             
-            if (!target) {
-                console.log("No target selected");
-                return; // User cancelled
+            // Wait for graph to update after moving source
+            console.log(`[Folgemove] Waiting for graph update after source move`);
+            try {
+                await this.waitForGraphUpdate();
+                console.log(`[Folgemove] Graph updated after source move`);
+            } catch (error) {
+                console.warn(`[Folgemove] Warning: ${error.message}`);
             }
-
-            // Get target directory - either the selected folder or the parent of the selected file
-            const targetDir = target instanceof TFolder ? target : target.parent;
-            if (!targetDir) {
-                console.log("Invalid target location - no parent directory");
-                new Notice("Invalid target location");
-                return;
-            }
-
-            // Get current FileBrowserView instance to access the graph
-            const fileBrowserView = this.views.find(view => view instanceof FileBrowserView) as FileBrowserView;
-            if (!fileBrowserView?.currentGraph) {
-                console.log("File browser not initialized");
-                new Notice("File browser not initialized");
-                return;
-            }
-
-            // Get the source and target nodes from the graph
-            const sourceNode = fileBrowserView.currentGraph.nodes.get(sourceFile.path);
-            const targetNode = fileBrowserView.currentGraph.nodes.get(target.path);
             
-            if (!sourceNode) {
-                console.log("Source file not found in graph");
-                new Notice("Source file not found in graph");
-                return;
+            // Move children recursively
+            if (children.length > 0) {
+                console.log(`[Folgemove] Starting recursive move of children to ${newPath}`);
+                await this.moveChildrenRecursively(children, newPath);
             }
 
-            let finalPath: string;
-            if (targetNode?.id) {
-                // If target has an ID (whether file or folder), generate new ID
-                const newId = getNextAvailableChildId(target.path, fileBrowserView.currentGraph);
-                const newName = `${newId} ${sourceNode.name}.md`;
-                finalPath = `${targetDir.path}/${newName}`;
-                console.log("Moving to final location with new ID:", finalPath);
-            } else {
-                // If target has no ID, just move to directory with original name
-                finalPath = `${targetDir.path}/${sourceNode.name}.md`;
-                console.log("Moving to new directory:", finalPath);
-            }
-
-            await this.app.fileManager.renameFile(sourceFile, finalPath);
-            new Notice("File moved successfully");
-            
+            new Notice('Files moved successfully');
         } catch (error) {
-            console.error('Folgemove error:', error);
+            console.error('Error moving file:', error);
             new Notice(`Error moving file: ${error.message}`);
+        }
+    }
+
+    private async moveChildrenRecursively(children: TAbstractFile[], newParentPath: string) {
+        console.log(`[MoveChildren] Moving ${children.length} children to ${newParentPath}`);
+        for (const child of children) {
+            console.log(`[MoveChildren] Processing child: ${child.path}`);
+            
+            // Get grandchildren BEFORE moving the child
+            const grandchildren = this.getChildrenToMove(child.path);
+            console.log(`[MoveChildren] Found ${grandchildren.length} grandchildren for ${child.path}:`, grandchildren.map(c => c.path));
+            
+            // Move this child to be under the new parent
+            const newChildPath = await this.moveSingleNode(child, newParentPath);
+            if (!newChildPath) {
+                console.log(`[MoveChildren] Failed to move child: ${child.path}`);
+                continue;
+            }
+            console.log(`[MoveChildren] Moved child to: ${newChildPath}`);
+
+            // Wait for graph to update after moving child
+            console.log(`[MoveChildren] Waiting for graph update after child move`);
+            try {
+                await this.waitForGraphUpdate();
+                console.log(`[MoveChildren] Graph updated after child move`);
+            } catch (error) {
+                console.warn(`[MoveChildren] Warning: ${error.message}`);
+            }
+
+            // Move grandchildren recursively if any were found
+            if (grandchildren.length > 0) {
+                console.log(`[MoveChildren] Starting recursive move of ${grandchildren.length} grandchildren to ${newChildPath}`);
+                await this.moveChildrenRecursively(grandchildren, newChildPath);
+            }
+        }
+    }
+
+    private getChildrenToMove(sourcePath: string): TAbstractFile[] {
+        console.log(`[GetChildren] Finding children of ${sourcePath}`);
+        const graph = this.getActiveGraph();
+        const children: TAbstractFile[] = [];
+        const childPaths = graph.edges.get(sourcePath) || new Set<string>();
+        console.log(`[GetChildren] Found edges:`, Array.from(childPaths));
+
+        for (const childPath of childPaths) {
+            const file = this.app.vault.getAbstractFileByPath(childPath);
+            if (file) {
+                children.push(file);
+                console.log(`[GetChildren] Added child: ${file.path}`);
+            } else {
+                console.log(`[GetChildren] Warning: Could not find file for path: ${childPath}`);
+            }
+        }
+
+        // Sort children to ensure consistent ordering
+        const sortedChildren = children.sort((a, b) => a.path.localeCompare(b.path));
+        console.log(`[GetChildren] Final sorted children:`, sortedChildren.map(c => c.path));
+        return sortedChildren;
+    }
+
+    private async moveSingleNode(source: TAbstractFile, targetPath: string): Promise<string | null> {
+        try {
+            console.log(`[MoveSingle] Moving ${source.path} under ${targetPath}`);
+            const graph = this.getActiveGraph();
+            const targetNode = graph.nodes.get(targetPath);
+            if (!targetNode) {
+                throw new Error(`Target node ${targetPath} not found in graph`);
+            }
+
+            // Get next available child ID for the target
+            const newId = getNextAvailableChildId(targetPath, graph);
+            if (!newId) {
+                throw new Error('Could not generate new ID');
+            }
+            console.log(`[MoveSingle] Generated new ID: ${newId}`);
+
+            // Create new filename with the new ID
+            const sourceNode = graph.nodes.get(source.path);
+            const baseName = sourceNode?.name || source.name;
+            const extension = source instanceof TFile ? '.' + source.extension : '';
+            const newName = `${newId} ${baseName}${extension}`;
+            console.log(`[MoveSingle] New filename: ${newName}`);
+
+            // Determine the new path
+            const targetFolder = targetNode.isDirectory ? targetPath : this.app.vault.getAbstractFileByPath(targetPath)?.parent?.path || '';
+            const newPath = `${targetFolder}/${newName}`;
+            console.log(`[MoveSingle] Final path: ${newPath}`);
+
+            // Move the file
+            await this.app.fileManager.renameFile(source, newPath);
+            console.log(`[MoveSingle] Successfully moved to ${newPath}`);
+            return newPath;
+        } catch (error) {
+            console.error('[MoveSingle] Error:', error);
+            return null;
         }
     }
 
     async createFollowUpNote(activeFile: TFile) {
         try {
-            // Ensure graph is initialized
-            if (!this.fileGraph) {
-                const files = this.app.vault.getFiles();
-                const folders = this.app.vault.getAllLoadedFiles().filter(f => f instanceof TFolder) as TFolder[];
-                const items = [...files, ...folders];
-                this.fileGraph = buildFileGraph(items);
-            }
+            const graph = this.getActiveGraph();
 
             // Get parent node from graph
             const parentPath = activeFile.path;
-            const parentNode = this.fileGraph.nodes.get(parentPath);
+            const parentNode = graph.nodes.get(parentPath);
             if (!parentNode || !parentNode.id) {
                 new Notice('Parent note must have an ID');
                 return;
@@ -286,7 +414,7 @@ export default class MMSPlugin extends Plugin {
             let newId: string;
             if (result.type === 'searching') {
                 // For searching notes, get next available child ID
-                newId = getNextAvailableChildId(parentPath, this.fileGraph);
+                newId = getNextAvailableChildId(parentPath, graph);
                 if (!newId) {
                     new Notice('Could not generate child ID');
                     return;
@@ -308,6 +436,15 @@ export default class MMSPlugin extends Plugin {
         } catch (error) {
             console.error('Error creating follow up note:', error);
             new Notice('Error creating follow up note');
+        }
+    }
+
+    private ensureGraphInitialized() {
+        if (!this.fileGraph) {
+            const files = this.app.vault.getFiles();
+            const folders = this.app.vault.getAllLoadedFiles().filter(f => f instanceof TFolder) as TFolder[];
+            const items = [...files, ...folders];
+            this.fileGraph = buildFileGraph(items);
         }
     }
 }
