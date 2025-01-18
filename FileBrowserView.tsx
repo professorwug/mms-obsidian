@@ -1,4 +1,4 @@
-import { ItemView, TFile, TFolder, WorkspaceLeaf, Menu, TAbstractFile } from 'obsidian';
+import { ItemView, TFile, TFolder, WorkspaceLeaf, Menu, TAbstractFile, Notice, App } from 'obsidian';
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import { buildFileGraph, FileGraph } from './FileGraph';
@@ -110,14 +110,14 @@ const FileItem: React.FC<FileItemProps> = ({
                 return;
             }
 
-            const targetDir = actualChildPath.split('/').slice(0, -1).join('/');
+            const targetDir = (actualChildPath as string).split('/').slice(0, -1).join('/');
             console.log('Using directory from non-surrogate child:', targetDir);
 
             const newFilePath = targetDir ? `${targetDir}/${node.id} Placeholder.md` : `${node.id} Placeholder.md`;
             console.log('Creating file at:', newFilePath);
             
             try {
-                await app.vault.create(newFilePath, '');
+                await plugin.app.vault.create(newFilePath, '');
                 console.log('Created new file:', newFilePath);
 
                 // If the surrogate was expanded, expand the new placeholder file
@@ -134,13 +134,13 @@ const FileItem: React.FC<FileItemProps> = ({
                 }
 
                 // Open the new file in a new tab
-                const file = app.vault.getAbstractFileByPath(newFilePath);
+                const file = plugin.app.vault.getAbstractFileByPath(newFilePath);
                 if (file instanceof TFile) {
-                    await app.workspace.getLeaf('tab').openFile(file);
+                    await plugin.app.workspace.getLeaf('tab').openFile(file);
                 }
             } catch (error) {
                 console.error('Error creating file:', error);
-                new Notice(`Error creating file: ${error.message}`);
+                new Notice(`Error creating file: ${(error as Error).message}`);
             }
             return;
         }
@@ -295,7 +295,7 @@ const FileItem: React.FC<FileItemProps> = ({
 interface FileBrowserComponentProps {
     files: TFile[];
     folders: TFolder[];
-    app: any;
+    app: App;
     plugin: MMSPlugin;
     initialExpandedPaths: Set<string>;
     initialSelectedPath: string | null;
@@ -313,7 +313,7 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
 }) => {
     const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(initialExpandedPaths);
     const [selectedPath, setSelectedPath] = React.useState<string | null>(initialSelectedPath);
-    const graph = React.useMemo(() => buildFileGraph([...folders, ...files]), [files, folders]);
+    const [graph, setGraph] = React.useState<FileGraph | null>(null);
 
     // Notify parent of state changes
     React.useEffect(() => {
@@ -332,7 +332,7 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
 
     const handleFileClick = async (path: string) => {
         console.log('File click handler called with path:', path);
-        const node = graph.nodes.get(path);
+        const node = graph?.nodes.get(path);
         if (!node || node.isDirectory) {
             console.log('Invalid node or directory, ignoring click');
             return;
@@ -377,8 +377,13 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         }
     };
 
+    React.useEffect(() => {
+        const newGraph = buildFileGraph([...folders, ...files]);
+        setGraph(newGraph);
+    }, [files, folders]);
+
     const rootChildren = React.useMemo(() => 
-        Array.from(graph.edges.get('/') || []), [graph]
+        Array.from(graph?.edges.get('/') || []), [graph]
     );
 
     return (
@@ -388,10 +393,10 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         >
             <div className="file-list">
                 {rootChildren.map(childPath => {
-                    const childNode = graph.nodes.get(childPath);
+                    const childNode = graph?.nodes.get(childPath);
                     if (!childNode) return null;
 
-                    const children = Array.from(graph.edges.get(childPath) || new Set());
+                    const children = Array.from(graph?.edges.get(childPath) || new Set());
                     
                     return (
                         <FileItem

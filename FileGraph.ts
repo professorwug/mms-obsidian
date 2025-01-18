@@ -11,7 +11,7 @@ interface GraphNode {
     paths: Set<string>;   // All paths associated with this node
 }
 
-interface FileGraph {
+export interface FileGraph {
     nodes: Map<string, GraphNode>;  // path -> node
     edges: Map<string, Set<string>>; // parent path -> set of child paths
 }
