@@ -1,8 +1,22 @@
-import { ItemView, TFile, TFolder, WorkspaceLeaf, Menu, TAbstractFile } from 'obsidian';
+import { ItemView, TFile, TFolder, WorkspaceLeaf, Menu, TAbstractFile, Notice, App } from 'obsidian';
 import * as React from 'react';
-import { createRoot } from 'react-dom/client';
+import { createRoot, Root } from 'react-dom/client';
 import { buildFileGraph, FileGraph } from './FileGraph';
 import MMSPlugin from './main';
+
+interface FileTypeCommands {
+    [key: string]: string;
+}
+
+interface MMSPluginSettings {
+    fileTypeCommands: FileTypeCommands;
+}
+
+interface IMMSPlugin {
+    settings: MMSPluginSettings;
+    app: App;
+    createFollowUpNote: (file: TFile) => void;
+}
 
 interface FileItemProps {
     path: string;
@@ -14,7 +28,8 @@ interface FileItemProps {
     selectedPath: string | null;
     onSelect: (path: string) => void;
     onFileClick: (path: string) => void;
-    plugin: MMSPlugin;
+    plugin: IMMSPlugin;
+    app: App;
 }
 
 const FileItem: React.FC<FileItemProps> = ({ 
@@ -27,7 +42,8 @@ const FileItem: React.FC<FileItemProps> = ({
     selectedPath,
     onSelect,
     onFileClick,
-    plugin
+    plugin,
+    app
 }) => {
     const node = graph.nodes.get(path);
     if (!node) return null;
@@ -117,7 +133,7 @@ const FileItem: React.FC<FileItemProps> = ({
             console.log('Creating file at:', newFilePath);
             
             try {
-                await app.vault.create(newFilePath, '');
+                await plugin.app.vault.create(newFilePath, '');
                 console.log('Created new file:', newFilePath);
 
                 // If the surrogate was expanded, expand the new placeholder file
@@ -129,14 +145,14 @@ const FileItem: React.FC<FileItemProps> = ({
                         newExpandedPaths.delete(path);
                         // Add the new placeholder path
                         newExpandedPaths.add(newFilePath);
-                        setExpandedPaths(newExpandedPaths);
+                        onToggle(newFilePath); // Use onToggle instead of setExpandedPaths
                     }, 100);
                 }
 
                 // Open the new file in a new tab
-                const file = app.vault.getAbstractFileByPath(newFilePath);
+                const file = plugin.app.vault.getAbstractFileByPath(newFilePath);
                 if (file instanceof TFile) {
-                    await app.workspace.getLeaf('tab').openFile(file);
+                    await plugin.app.workspace.getLeaf('tab').openFile(file);
                 }
             } catch (error) {
                 console.error('Error creating file:', error);
@@ -268,7 +284,7 @@ const FileItem: React.FC<FileItemProps> = ({
                             const childNode = graph.nodes.get(childPath);
                             if (!childNode) return null;
 
-                            const children = Array.from(graph.edges.get(childPath) || new Set());
+                            const children = Array.from(graph.edges.get(childPath) || []) as string[];
                             
                             return (
                                 <FileItem
@@ -283,6 +299,7 @@ const FileItem: React.FC<FileItemProps> = ({
                                     onSelect={onSelect}
                                     onFileClick={onFileClick}
                                     plugin={plugin}
+                                    app={app}
                                 />
                             );
                         })}
@@ -295,8 +312,8 @@ const FileItem: React.FC<FileItemProps> = ({
 interface FileBrowserComponentProps {
     files: TFile[];
     folders: TFolder[];
-    app: any;
-    plugin: MMSPlugin;
+    app: App;
+    plugin: IMMSPlugin;
     initialExpandedPaths: Set<string>;
     initialSelectedPath: string | null;
     onStateChange?: (expandedPaths: Set<string>, selectedPath: string | null, graph: FileGraph) => void;
@@ -357,8 +374,8 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                 await app.workspace.getLeaf('tab').openFile(file);
             }
         } else {
-            // Get absolute path by combining vault path with relative path
-            const vaultPath = app.vault.adapter.getBasePath();
+            // Get the vault path from plugin
+            const vaultPath = plugin.app.vault.configDir.replace('/.obsidian', '');
             const absolutePath = `${vaultPath}/${path}`;
             console.log('Converting to absolute path:', absolutePath);
 
@@ -378,7 +395,7 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
     };
 
     const rootChildren = React.useMemo(() => 
-        Array.from(graph.edges.get('/') || []), [graph]
+        Array.from(graph.edges.get('/') || []) as string[], [graph]
     );
 
     return (
@@ -391,7 +408,7 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                     const childNode = graph.nodes.get(childPath);
                     if (!childNode) return null;
 
-                    const children = Array.from(graph.edges.get(childPath) || new Set());
+                    const children = Array.from(graph.edges.get(childPath) || []) as string[];
                     
                     return (
                         <FileItem
@@ -406,6 +423,7 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                             onSelect={setSelectedPath}
                             onFileClick={handleFileClick}
                             plugin={plugin}
+                            app={app}
                         />
                     );
                 })}
@@ -416,12 +434,12 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
 
 export class FileBrowserView extends ItemView {
     private root: Root | null = null;
-    private plugin: MMSPlugin;
+    private plugin: IMMSPlugin;
     private currentExpandedPaths: Set<string> = new Set();
     private currentSelectedPath: string | null = null;
     private currentGraph: FileGraph | null = null;
 
-    constructor(leaf: WorkspaceLeaf, plugin: MMSPlugin) {
+    constructor(leaf: WorkspaceLeaf, plugin: IMMSPlugin) {
         super(leaf);
         this.plugin = plugin;
     }
@@ -529,5 +547,10 @@ export class FileBrowserView extends ItemView {
             this.root.unmount();
             this.root = null;
         }
+    }
+
+    // Public method to access the current graph
+    public getCurrentGraph(): FileGraph | null {
+        return this.currentGraph;
     }
 }

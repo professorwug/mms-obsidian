@@ -1,4 +1,4 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, TFile, TFolder } from 'obsidian';
+import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, TFile, TFolder, TAbstractFile } from 'obsidian';
 import { FileBrowserView } from './FileBrowserView';
 import { FolgemoveModal } from './FolgemoveModal';
 import { FollowUpModal } from './FollowUpModal';
@@ -9,6 +9,7 @@ import { FileGraph, buildFileGraph } from './FileGraph';
 
 interface MMSPluginSettings {
     fileTypeCommands: {
+        [key: string]: string;
         py: string;
         ipynb: string;
         qmd: string;
@@ -187,8 +188,12 @@ export default class MMSPlugin extends Plugin {
 
         let leaf = workspace.getLeavesOfType('folgezettel-browser')[0];
         if (!leaf) {
-            leaf = workspace.getLeftLeaf(false);
-            await leaf.setViewState({ type: 'folgezettel-browser' });
+            const newLeaf = workspace.getLeftLeaf(false);
+            if (!newLeaf) {
+                throw new Error('Could not create leaf for folgezettel-browser');
+            }
+            await newLeaf.setViewState({ type: 'folgezettel-browser' });
+            leaf = newLeaf;
         }
 
         workspace.revealLeaf(leaf);
@@ -205,10 +210,14 @@ export default class MMSPlugin extends Plugin {
 
     private getActiveGraph(): FileGraph {
         const fileBrowserView = this.views.find(view => view instanceof FileBrowserView) as FileBrowserView;
-        if (!fileBrowserView?.currentGraph) {
+        if (!fileBrowserView) {
             throw new Error('File browser not initialized');
         }
-        return fileBrowserView.currentGraph;
+        const currentGraph = fileBrowserView.getCurrentGraph();
+        if (!currentGraph) {
+            throw new Error('Graph not initialized');
+        }
+        return currentGraph;
     }
 
     private async waitForGraphUpdate(timeout = 2000): Promise<void> {
