@@ -56,9 +56,6 @@ export default class MMSPlugin extends Plugin {
         this.registerEvent(
             this.app.vault.on('rename', () => this.refreshViews())
         );
-        this.registerEvent(
-            this.app.vault.on('modify', () => this.refreshViews())
-        );
 
         // Add a ribbon icon for the Folgezettel Browser
         const folgezettelRibbonIconEl = this.addRibbonIcon('folder', 'Folgezettel Browser', async (evt: MouseEvent) => {
