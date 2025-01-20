@@ -300,11 +300,89 @@ export default class MMSPlugin extends Plugin {
                 await this.moveChildrenRecursively(children, newPath);
             }
 
-            new Notice('Files moved successfully');
         } catch (error) {
-            console.error('Error moving file:', error);
+            console.error('[Folgemove] Error:', error);
             new Notice(`Error moving file: ${error.message}`);
         }
+    }
+
+    private async moveSingleNode(source: TAbstractFile, targetPath: string): Promise<string | null> {
+        try {
+            console.log(`[MoveSingle] Moving ${source.path} under ${targetPath}`);
+            const graph = this.getActiveGraph();
+            const targetNode = graph.nodes.get(targetPath);
+            if (!targetNode) {
+                throw new Error(`Target node ${targetPath} not found in graph`);
+            }
+
+            // Get source node to check for multiple paths
+            const sourceNode = graph.nodes.get(source.path);
+            if (!sourceNode) {
+                throw new Error(`Source node ${source.path} not found in graph`);
+            }
+
+            // Get next available child ID for the target
+            const newId = getNextAvailableChildId(targetPath, graph);
+            if (!newId) {
+                throw new Error('Could not generate new ID');
+            }
+            console.log(`[MoveSingle] Generated new ID: ${newId}`);
+
+            // Move each file with the same ID but different extensions
+            let primaryNewPath: string | null = null;
+            for (const sourcePath of sourceNode.paths) {
+                const sourceFile = this.app.vault.getAbstractFileByPath(sourcePath);
+                if (!sourceFile || !(sourceFile instanceof TFile)) continue;
+
+                // Create new filename with the new ID but keep original extension
+                const baseName = sourceNode.name;
+                const extension = sourceFile.extension;
+                const newName = `${newId} ${baseName}.${extension}`;
+                console.log(`[MoveSingle] New filename for extension ${extension}: ${newName}`);
+
+                // Determine the new path
+                const targetFolder = targetNode.isDirectory ? targetPath : this.app.vault.getAbstractFileByPath(targetPath)?.parent?.path || '';
+                const newPath = `${targetFolder}/${newName}`;
+                console.log(`[MoveSingle] Moving ${sourcePath} to ${newPath}`);
+
+                // Move the file
+                await this.app.fileManager.renameFile(sourceFile, newPath);
+                console.log(`[MoveSingle] Successfully moved to ${newPath}`);
+
+                // Store the first new path as the primary path
+                if (!primaryNewPath) {
+                    primaryNewPath = newPath;
+                }
+            }
+
+            return primaryNewPath;
+        } catch (error) {
+            console.error('[MoveSingle] Error:', error);
+            return null;
+        }
+    }
+
+    private getChildrenToMove(sourcePath: string): TAbstractFile[] {
+        console.log(`[GetChildren] Finding children of ${sourcePath}`);
+        const graph = this.getActiveGraph();
+        const children: TAbstractFile[] = [];
+        const childPaths = graph.edges.get(sourcePath) || new Set<string>();
+        console.log(`[GetChildren] Found edges:`, Array.from(childPaths));
+
+        for (const childPath of childPaths) {
+            const file = this.app.vault.getAbstractFileByPath(childPath);
+            if (file) {
+                children.push(file);
+                console.log(`[GetChildren] Added child: ${file.path}`);
+            } else {
+                console.log(`[GetChildren] Warning: Could not find file for path: ${childPath}`);
+            }
+        }
+
+        // Sort children to ensure consistent ordering
+        const sortedChildren = children.sort((a, b) => a.path.localeCompare(b.path));
+        console.log(`[GetChildren] Final sorted children:`, sortedChildren.map(c => c.path));
+        return sortedChildren;
     }
 
     private async moveChildrenRecursively(children: TAbstractFile[], newParentPath: string) {
@@ -338,67 +416,6 @@ export default class MMSPlugin extends Plugin {
                 console.log(`[MoveChildren] Starting recursive move of ${grandchildren.length} grandchildren to ${newChildPath}`);
                 await this.moveChildrenRecursively(grandchildren, newChildPath);
             }
-        }
-    }
-
-    private getChildrenToMove(sourcePath: string): TAbstractFile[] {
-        console.log(`[GetChildren] Finding children of ${sourcePath}`);
-        const graph = this.getActiveGraph();
-        const children: TAbstractFile[] = [];
-        const childPaths = graph.edges.get(sourcePath) || new Set<string>();
-        console.log(`[GetChildren] Found edges:`, Array.from(childPaths));
-
-        for (const childPath of childPaths) {
-            const file = this.app.vault.getAbstractFileByPath(childPath);
-            if (file) {
-                children.push(file);
-                console.log(`[GetChildren] Added child: ${file.path}`);
-            } else {
-                console.log(`[GetChildren] Warning: Could not find file for path: ${childPath}`);
-            }
-        }
-
-        // Sort children to ensure consistent ordering
-        const sortedChildren = children.sort((a, b) => a.path.localeCompare(b.path));
-        console.log(`[GetChildren] Final sorted children:`, sortedChildren.map(c => c.path));
-        return sortedChildren;
-    }
-
-    private async moveSingleNode(source: TAbstractFile, targetPath: string): Promise<string | null> {
-        try {
-            console.log(`[MoveSingle] Moving ${source.path} under ${targetPath}`);
-            const graph = this.getActiveGraph();
-            const targetNode = graph.nodes.get(targetPath);
-            if (!targetNode) {
-                throw new Error(`Target node ${targetPath} not found in graph`);
-            }
-
-            // Get next available child ID for the target
-            const newId = getNextAvailableChildId(targetPath, graph);
-            if (!newId) {
-                throw new Error('Could not generate new ID');
-            }
-            console.log(`[MoveSingle] Generated new ID: ${newId}`);
-
-            // Create new filename with the new ID
-            const sourceNode = graph.nodes.get(source.path);
-            const baseName = sourceNode?.name || source.name;
-            const extension = source instanceof TFile ? '.' + source.extension : '';
-            const newName = `${newId} ${baseName}${extension}`;
-            console.log(`[MoveSingle] New filename: ${newName}`);
-
-            // Determine the new path
-            const targetFolder = targetNode.isDirectory ? targetPath : this.app.vault.getAbstractFileByPath(targetPath)?.parent?.path || '';
-            const newPath = `${targetFolder}/${newName}`;
-            console.log(`[MoveSingle] Final path: ${newPath}`);
-
-            // Move the file
-            await this.app.fileManager.renameFile(source, newPath);
-            console.log(`[MoveSingle] Successfully moved to ${newPath}`);
-            return newPath;
-        } catch (error) {
-            console.error('[MoveSingle] Error:', error);
-            return null;
         }
     }
 

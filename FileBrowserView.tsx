@@ -3,6 +3,7 @@ import * as React from 'react';
 import { createRoot, Root } from 'react-dom/client';
 import { buildFileGraph, FileGraph } from './FileGraph';
 import MMSPlugin from './main';
+import { FolgemoveModal } from './FolgemoveModal';
 
 interface FileTypeCommands {
     [key: string]: string;
@@ -16,6 +17,7 @@ interface IMMSPlugin {
     settings: MMSPluginSettings;
     app: App;
     createFollowUpNote: (file: TFile) => void;
+    folgemove: (file: TFile, targetPath: string) => void;
 }
 
 interface FileItemProps {
@@ -26,7 +28,8 @@ interface FileItemProps {
     onToggle: (path: string) => void;
     expandedPaths: Set<string>;
     selectedPath: string | null;
-    onSelect: (path: string) => void;
+    selectedPaths: Set<string>;
+    onSelect: (path: string, isMultiSelect: boolean) => void;
     onFileClick: (path: string) => void;
     plugin: IMMSPlugin;
     app: App;
@@ -40,6 +43,7 @@ const FileItem: React.FC<FileItemProps> = ({
     onToggle,
     expandedPaths,
     selectedPath,
+    selectedPaths,
     onSelect,
     onFileClick,
     plugin,
@@ -52,6 +56,7 @@ const FileItem: React.FC<FileItemProps> = ({
     const expanded = expandedPaths.has(path);
     const displayName = node.id ? `${node.id} ${node.name}` : node.name;
     const isSelected = selectedPath === path;
+    const isMultiSelected = selectedPaths.has(path);
 
     // Check if this node has any mapping or planning children
     const hasMappingChild = hasChildren && children.some(childPath => {
@@ -66,7 +71,7 @@ const FileItem: React.FC<FileItemProps> = ({
     const handleClick = async (e: React.MouseEvent) => {
         console.log('Main item clicked:', path);
         e.stopPropagation();
-        onSelect(path);
+        onSelect(path, e.ctrlKey || e.metaKey);
         
         const node = graph.nodes.get(path);
         if (!node) return;
@@ -185,8 +190,57 @@ const FileItem: React.FC<FileItemProps> = ({
     const handleContextMenu = (e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
-        
+
         const menu = new Menu();
+        const node = graph.nodes.get(path);
+        if (!node) return;
+
+        // Get all selected files (including the current one if it's not in the selection)
+        const filesToMove = new Set(selectedPaths);
+        if (!filesToMove.has(path)) {
+            filesToMove.clear();
+            filesToMove.add(path);
+        }
+
+        // Don't show Folgemove for surrogate nodes or if any selected item is a surrogate
+        const hasSurrogate = Array.from(filesToMove).some(p => {
+            const n = graph.nodes.get(p);
+            return n?.isSurrogate;
+        });
+
+        if (!hasSurrogate) {
+            const fileCount = filesToMove.size;
+            menu.addItem((item) => {
+                item
+                    .setTitle(fileCount > 1 ? `Folgemove (${fileCount} files)` : "Folgemove")
+                    .setIcon("arrow-right")
+                    .onClick(async () => {
+                        // Get all the files to move
+                        const files = Array.from(filesToMove)
+                            .map(p => plugin.app.vault.getAbstractFileByPath(p))
+                            .filter((f): f is TFile => f instanceof TFile);
+
+                        if (files.length > 0) {
+                            const modal = new FolgemoveModal(plugin.app);
+                            modal.open();
+                            const targetFile = await modal.getResult();
+                            if (targetFile) {
+                                const targetPath = targetFile.path;
+                                
+                                if (!targetPath) {
+                                    new Notice('Invalid target location');
+                                    return;
+                                }
+
+                                // Move each file in sequence
+                                for (const file of files) {
+                                    await plugin.folgemove(file, targetPath);
+                                }
+                            }
+                        }
+                    });
+            });
+        }
 
         if (!node.isDirectory) {
             menu.addItem(item => 
@@ -202,7 +256,7 @@ const FileItem: React.FC<FileItemProps> = ({
             );
         }
 
-        menu.showAtMouseEvent(e as any);
+        menu.showAtMouseEvent(e.nativeEvent);
     };
 
     const handleExtensionClick = (e: React.MouseEvent, ext: string) => {
@@ -227,7 +281,7 @@ const FileItem: React.FC<FileItemProps> = ({
             <div className={`file-item ${hasChildren ? 'has-children' : ''} ${node.isDirectory ? 'is-folder' : ''}`}>
                 <div className="file-item-indent" style={{ width: `${depth * 20}px` }} />
                 <div 
-                    className={`file-item-content ${isSelected ? 'is-selected' : ''} ${
+                    className={`file-item-content ${isSelected ? 'is-selected' : ''} ${isMultiSelected ? 'is-multi-selected' : ''} ${
                         node.nodeType ? `is-${node.nodeType}-node` : ''
                     }`}
                     onClick={handleClick}
@@ -296,6 +350,7 @@ const FileItem: React.FC<FileItemProps> = ({
                                     onToggle={onToggle}
                                     expandedPaths={expandedPaths}
                                     selectedPath={selectedPath}
+                                    selectedPaths={selectedPaths}
                                     onSelect={onSelect}
                                     onFileClick={onFileClick}
                                     plugin={plugin}
@@ -330,6 +385,7 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
 }) => {
     const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(initialExpandedPaths);
     const [selectedPath, setSelectedPath] = React.useState<string | null>(initialSelectedPath);
+    const [selectedPaths, setSelectedPaths] = React.useState<Set<string>>(new Set());
     const graph = React.useMemo(() => buildFileGraph([...folders, ...files]), [files, folders]);
 
     // Notify parent of state changes
@@ -346,6 +402,23 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         }
         setExpandedPaths(newExpandedPaths);
     };
+
+    const handleSelect = React.useCallback((path: string, isMultiSelect: boolean) => {
+        if (isMultiSelect) {
+            setSelectedPaths(prev => {
+                const newPaths = new Set(prev);
+                if (newPaths.has(path)) {
+                    newPaths.delete(path);
+                } else {
+                    newPaths.add(path);
+                }
+                return newPaths;
+            });
+        } else {
+            setSelectedPath(path);
+            setSelectedPaths(new Set([path]));
+        }
+    }, []);
 
     const handleFileClick = async (path: string) => {
         console.log('File click handler called with path:', path);
@@ -420,7 +493,8 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                             onToggle={handleToggle}
                             expandedPaths={expandedPaths}
                             selectedPath={selectedPath}
-                            onSelect={setSelectedPath}
+                            selectedPaths={selectedPaths}
+                            onSelect={handleSelect}
                             onFileClick={handleFileClick}
                             plugin={plugin}
                             app={app}
