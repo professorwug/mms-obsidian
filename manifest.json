@@ -1,11 +1,11 @@
 {
 	"id": "mms",
-	"name": "Marimo Search",
-	"version": "1.0.0",
+	"name": "Maps, Masterplans & Searches",
+	"version": "0.0.7",
 	"minAppVersion": "1.4.0",
-	"description": "Search and organize your notes with Marimo",
-	"author": "Codeium",
-	"authorUrl": "https://codeium.com",
+	"description": "Browse your notes hierarchically based on folgezettel IDs, and code in a computational zettelkasten!",
+	"author": "Riddle",
+	"authorUrl": "https://riddle.press",
 	"fundingUrl": "https://obsidian.md/pricing",
 	"isDesktopOnly": true
 }
