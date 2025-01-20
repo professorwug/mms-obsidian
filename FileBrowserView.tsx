@@ -1,7 +1,7 @@
 import { ItemView, TFile, TFolder, WorkspaceLeaf, Menu, TAbstractFile, Notice, App } from 'obsidian';
 import * as React from 'react';
 import { createRoot, Root } from 'react-dom/client';
-import { buildFileGraph, FileGraph } from './FileGraph';
+import { buildFileGraph, FileGraph, GraphNode } from './FileGraph';
 import MMSPlugin from './main';
 import { FolgemoveModal } from './FolgemoveModal';
 
@@ -11,6 +11,12 @@ interface FileTypeCommands {
 
 interface MMSPluginSettings {
     fileTypeCommands: FileTypeCommands;
+    htmlBehavior: 'obsidian' | 'browser';
+    useMarimo: boolean;
+    marimoRemoteCommand?: string;
+    marimoRemoteHost?: string;
+    marimoRemoteUser?: string;
+    marimoRemoteKeyPath?: string;
 }
 
 interface IMMSPlugin {
@@ -18,6 +24,9 @@ interface IMMSPlugin {
     app: App;
     createFollowUpNote: (file: TFile) => void;
     folgemove: (file: TFile, targetPath: string) => void;
+    openMarimoNotebook: (file: TFile) => void;
+    openRemoteMarimoNotebook: (file: TFile, node: GraphNode) => void;
+    executeDefaultPythonCommand: (file: TFile) => void;
 }
 
 interface FileItemProps {
@@ -177,6 +186,7 @@ const FileItem: React.FC<FileItemProps> = ({
         if (node.extensions.size > 0) {
             const mdPath = Array.from(node.paths).find(p => p.toLowerCase().endsWith('.md'));
             console.log('Looking for preferred .md file:', mdPath);
+            
             if (mdPath) {
                 onFileClick(mdPath);
             } else {
@@ -193,68 +203,79 @@ const FileItem: React.FC<FileItemProps> = ({
 
         const menu = new Menu();
         const node = graph.nodes.get(path);
+
         if (!node) return;
 
-        // Get all selected files (including the current one if it's not in the selection)
-        const filesToMove = new Set(selectedPaths);
-        if (!filesToMove.has(path)) {
-            filesToMove.clear();
-            filesToMove.add(path);
-        }
-
-        // Don't show Folgemove for surrogate nodes or if any selected item is a surrogate
-        const hasSurrogate = Array.from(filesToMove).some(p => {
-            const n = graph.nodes.get(p);
-            return n?.isSurrogate;
-        });
-
-        if (!hasSurrogate) {
-            const fileCount = filesToMove.size;
-            menu.addItem((item) => {
-                item
-                    .setTitle(fileCount > 1 ? `Folgemove (${fileCount} files)` : "Folgemove")
-                    .setIcon("arrow-right")
-                    .onClick(async () => {
-                        // Get all the files to move
-                        const files = Array.from(filesToMove)
-                            .map(p => plugin.app.vault.getAbstractFileByPath(p))
-                            .filter((f): f is TFile => f instanceof TFile);
-
-                        if (files.length > 0) {
-                            const modal = new FolgemoveModal(plugin.app);
-                            modal.open();
-                            const targetFile = await modal.getResult();
-                            if (targetFile) {
-                                const targetPath = targetFile.path;
-                                
-                                if (!targetPath) {
-                                    new Notice('Invalid target location');
-                                    return;
-                                }
-
-                                // Move each file in sequence
-                                for (const file of files) {
-                                    await plugin.folgemove(file, targetPath);
-                                }
-                            }
-                        }
-                    });
-            });
-        }
-
+        // Add "Create Follow Up" option if it's a file
         if (!node.isDirectory) {
-            menu.addItem(item => 
-                item
-                    .setTitle("Create Follow Up Note")
-                    .setIcon("plus")
-                    .onClick(() => {
-                        const file = plugin.app.vault.getAbstractFileByPath(path);
-                        if (file instanceof TFile) {
+            const file = app.vault.getAbstractFileByPath(path);
+            if (file instanceof TFile) {
+                menu.addItem((item) => {
+                    item
+                        .setTitle("Create Follow Up")
+                        .setIcon("plus")
+                        .onClick(() => {
                             plugin.createFollowUpNote(file);
-                        }
-                    })
-            );
+                        });
+                });
+
+                // Add Python-specific options if it's a Python file
+                if (path.endsWith('.py')) {
+                    menu.addSeparator();
+
+                    if (plugin.settings.useMarimo) {
+                        // Add Marimo options
+                        menu.addItem((item) => {
+                            item
+                                .setTitle("Open in Marimo")
+                                .setIcon("code")
+                                .onClick(async () => {
+                                    await plugin.openMarimoNotebook(file);
+                                });
+                        });
+                    }
+
+                    // Add default Python command if configured
+                    if (plugin.settings.fileTypeCommands['py']) {
+                        menu.addItem((item) => {
+                            item
+                                .setTitle("Open in Default Editor")
+                                .setIcon("edit")
+                                .onClick(async () => {
+                                    await plugin.executeDefaultPythonCommand(file);
+                                });
+                        });
+                    }
+
+                    // Add remote notebook option if configured
+                    if (plugin.settings.marimoRemoteHost && plugin.settings.marimoRemoteUser && plugin.settings.marimoRemoteKeyPath) {
+                        menu.addItem((item) => {
+                            item
+                                .setTitle("Open as Remote Notebook")
+                                .setIcon("globe")
+                                .onClick(async () => {
+                                    await plugin.openRemoteMarimoNotebook(file, node);
+                                });
+                        });
+                    }
+                }
+            }
         }
+
+        // Add folgemove option
+        menu.addSeparator();
+        menu.addItem((item) => {
+            item
+                .setTitle("Move with Children")
+                .setIcon("folder-move")
+                .onClick(() => {
+                    const file = app.vault.getAbstractFileByPath(path);
+                    if (file) {
+                        const modal = new FolgemoveModal(app);
+                        modal.open();
+                    }
+                });
+        });
 
         menu.showAtMouseEvent(e.nativeEvent);
     };
@@ -439,21 +460,57 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         const command = plugin.settings.fileTypeCommands[extension];
         console.log('Found command from settings:', command);
         
-        if (extension === 'md' || extension === 'pdf' || !command) {
+        // Ignore Python files on direct click - they must be opened via context menu
+        if (extension === 'py') {
+            return;
+        }
+        
+        if (extension === 'md' || extension === 'pdf' || (!command && extension !== 'html')) {
             // Default behavior: open in Obsidian in a new tab
             console.log('Opening in Obsidian:', path);
             const file = app.vault.getAbstractFileByPath(path);
             if (file instanceof TFile) {
                 await app.workspace.getLeaf('tab').openFile(file);
             }
-        } else {
-            // Get the vault path from plugin
-            const vaultPath = plugin.app.vault.configDir.replace('/.obsidian', '');
-            const absolutePath = `${vaultPath}/${path}`;
+        } else if (extension === 'html') {
+            // Handle HTML files according to settings
+            const file = app.vault.getAbstractFileByPath(path);
+            if (!(file instanceof TFile)) {
+                console.error('File not found:', path);
+                return;
+            }
+
+            if (plugin.settings.htmlBehavior === 'obsidian') {
+                // Open in Obsidian by simulating a link click
+                console.log('Opening HTML file in Obsidian via link:', path);
+                await app.workspace.openLinkText(file.path, '', true, { active: true });
+            } else {
+                // Open in default browser
+                const absolutePath = (app.vault.adapter as any).basePath;
+                const filePath = require('path').resolve(absolutePath, file.path);
+                const { exec } = require('child_process');
+                exec(`open "${filePath}"`, (error: any) => {
+                    if (error) {
+                        console.error('Error opening HTML file:', error);
+                        new Notice(`Error opening HTML file: ${error.message}`);
+                    }
+                });
+            }
+        } else if (command) {
+            // Handle other file types with custom commands
+            const file = app.vault.getAbstractFileByPath(path);
+            if (!(file instanceof TFile)) {
+                console.error('File not found:', path);
+                return;
+            }
+
+            // Get the absolute path by combining vault path with file path
+            const vaultPath = (app.vault.adapter as any).basePath;
+            const absolutePath = require('path').resolve(vaultPath, file.path);
             console.log('Converting to absolute path:', absolutePath);
 
             // Run the configured command with absolute path
-            const finalCommand = command.replace('$FILEPATH', absolutePath);
+            const finalCommand = command.replace('$FILEPATH', `"${absolutePath}"`);
             console.log('Running command:', finalCommand);
             const { exec } = require('child_process');
             exec(finalCommand, (error: any) => {

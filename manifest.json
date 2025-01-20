@@ -1,11 +1,11 @@
 {
 	"id": "mms",
-	"name": "MMS",
-	"version": "0.0.6",
-	"minAppVersion": "0.15.0",
-	"description": "Maps, Metaphors, Searches.",
-	"author": "Boreas",
-	"authorUrl": "https://obsidian.md",
+	"name": "Marimo Search",
+	"version": "1.0.0",
+	"minAppVersion": "1.4.0",
+	"description": "Search and organize your notes with Marimo",
+	"author": "Codeium",
+	"authorUrl": "https://codeium.com",
 	"fundingUrl": "https://obsidian.md/pricing",
-	"isDesktopOnly": false
+	"isDesktopOnly": true
 }

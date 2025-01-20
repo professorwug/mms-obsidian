@@ -3,19 +3,30 @@ import { FileBrowserView } from './FileBrowserView';
 import { FolgemoveModal } from './FolgemoveModal';
 import { FollowUpModal } from './FollowUpModal';
 import { getNextAvailableChildId } from './utils';
-import { FileGraph, buildFileGraph } from './FileGraph';
+import { FileGraph, buildFileGraph, GraphNode } from './FileGraph';
 
 // Remember to rename these classes and interfaces!
 
+interface FileTypeCommands {
+    [key: string]: string;
+    py: string;
+    ipynb: string;
+    qmd: string;
+    nb: string;
+    pdf: string;
+}
+
 interface MMSPluginSettings {
-    fileTypeCommands: {
-        [key: string]: string;
-        py: string;
-        ipynb: string;
-        qmd: string;
-        nb: string;
-        pdf: string;
-    };
+    fileTypeCommands: FileTypeCommands;
+    htmlBehavior: 'obsidian' | 'browser';
+    useMarimo: boolean;
+    marimoLocalCommand: string;
+    marimoRemoteCommand: string;
+    marimoRemoteHost: string;
+    marimoRemoteUser: string;
+    marimoRemoteKeyPath: string;
+    marimoRemoteSync: boolean;
+    marimoRemoteVaultPath: string;
 }
 
 const DEFAULT_SETTINGS: MMSPluginSettings = {
@@ -23,15 +34,47 @@ const DEFAULT_SETTINGS: MMSPluginSettings = {
         py: 'code "$FILEPATH"',
         ipynb: 'code "$FILEPATH"',
         qmd: 'code "$FILEPATH"',
-        nb: 'open "$FILEPATH"',
-        pdf: '',
-    }
+        nb: 'code "$FILEPATH"',
+        pdf: 'open "$FILEPATH"'
+    },
+    htmlBehavior: 'obsidian',
+    useMarimo: false,
+    marimoLocalCommand: 'marimo edit $FILEPATH --port $PORT --token-password $PASSWORD',
+    marimoRemoteCommand: 'marimo edit $FILEPATH --port $PORT --token-password $PASSWORD',
+    marimoRemoteHost: '',
+    marimoRemoteUser: '',
+    marimoRemoteKeyPath: '',
+    marimoRemoteSync: true,
+    marimoRemoteVaultPath: ''
+}
+
+function generateRandomPort(): number {
+    // Generate a random port between 2000 and 65535
+    return Math.floor(Math.random() * (65535 - 2000 + 1)) + 2000;
+}
+
+function generateRandomPassword(): string {
+    // Generate a random 32-character hex string
+    return Array.from(crypto.getRandomValues(new Uint8Array(16)))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+}
+
+interface MarimoInstance {
+    port: number;
+    password: string;
+    process: any; // Child process handle
+    watchProcess?: any;  // Process for file watching
+    remotePath?: string; // Path on remote server
+    syncInterval?: NodeJS.Timeout; // Interval for bidirectional sync
+    lastSyncTime?: number; // Last time the file was synced
 }
 
 export default class MMSPlugin extends Plugin {
     settings: MMSPluginSettings;
     private views: FileBrowserView[] = [];
     private fileGraph: FileGraph;
+    private marimoInstances: Map<string, MarimoInstance> = new Map();
 
     async onload() {
         await this.loadSettings();
@@ -154,6 +197,15 @@ export default class MMSPlugin extends Plugin {
             }
         });
 
+        // Add Shutdown Marimo Servers command
+        this.addCommand({
+            id: 'shutdown-marimo-servers',
+            name: 'Shutdown All Marimo Servers',
+            callback: () => {
+                this.shutdownAllMarimoServers();
+            }
+        });
+
         // This adds a settings tab so the user can configure various aspects of the plugin
         this.addSettingTab(new MMSSettingTab(this.app, this));
 
@@ -169,6 +221,8 @@ export default class MMSPlugin extends Plugin {
 
     onunload() {
         this.views = [];
+        // Shut down all Marimo servers
+        this.shutdownAllMarimoServers();
     }
 
     async loadSettings() {
@@ -435,8 +489,8 @@ export default class MMSPlugin extends Plugin {
 
             // Get ID based on note type
             let newId: string;
-            if (result.type === 'searching') {
-                // For searching notes, get next available child ID
+            if (result.type === 'searching' || result.type === 'marimo') {
+                // For searching and marimo notes, get next available child ID
                 newId = getNextAvailableChildId(parentPath, graph);
                 if (!newId) {
                     new Notice('Could not generate child ID');
@@ -447,18 +501,31 @@ export default class MMSPlugin extends Plugin {
                 newId = result.type === 'mapping' ? `${parentNode.id}#` : `${parentNode.id}&`;
             }
 
-            // Create the new file
-            const newFileName = `${newId} ${result.name}.md`;
-            const newFilePath = `${activeFile.parent?.path ?? ''}/${newFileName}`;
+            // Create the new file with appropriate extension
+            const extension = result.type === 'marimo' ? '.py' : '.md';
+            const newFileName = `${newId} ${result.name}${extension}`;
+
+            // Get parent folder path
+            const parentFolder = activeFile.parent?.path || '';
+            const newFilePath = parentFolder ? `${parentFolder}/${newFileName}` : newFileName;
+
+            // Create file with appropriate initial content
+            let initialContent = '';
+            if (result.type === 'marimo') {
+                //  initialContent = `# %% [${parentNode.id}]\n# Follow-up to ${parentNode.id}\n\n`;
+            }
+
+            await this.app.vault.create(newFilePath, initialContent);
             
-            const newFile = await this.app.vault.create(newFilePath, '');
-            new Notice(`Created ${result.type} note: ${newFileName}`);
-            
-            // Open the new file in a new tab
-            await this.app.workspace.getLeaf('tab').openFile(newFile);
+            // Open the new file
+            const newFile = this.app.vault.getAbstractFileByPath(newFilePath);
+            if (newFile instanceof TFile) {
+                await this.app.workspace.getLeaf('tab').openFile(newFile);
+            }
+
         } catch (error) {
             console.error('Error creating follow up note:', error);
-            new Notice('Error creating follow up note');
+            new Notice(`Error creating follow up note: ${error.message}`);
         }
     }
 
@@ -469,6 +536,324 @@ export default class MMSPlugin extends Plugin {
             const items = [...files, ...folders];
             this.fileGraph = buildFileGraph(items);
         }
+    }
+
+    async openMarimoNotebook(file: TFile): Promise<void> {
+        try {
+            // Generate random port and password
+            const port = generateRandomPort();
+            const password = generateRandomPassword();
+            
+            // Get the absolute path
+            const vaultPath = (this.app.vault.adapter as any).basePath;
+            const filePath = require('path').resolve(vaultPath, file.path);
+
+            // Replace placeholders in command
+            const command = this.settings.marimoLocalCommand
+                .replace('$FILEPATH', `"${filePath}"`)
+                .replace('$PORT', port.toString())
+                .replace('$PASSWORD', password);
+
+            console.log('Running Marimo command:', command);
+
+            // Run the command
+            const { exec } = require('child_process');
+            const process = exec(command, (error: any) => {
+                if (error) {
+                    console.error('Error running Marimo:', error);
+                    new Notice(`Error running Marimo: ${error.message}`);
+                    this.marimoInstances.delete(file.path);
+                }
+            });
+
+            // Store the instance information
+            this.marimoInstances.set(file.path, {
+                port,
+                password,
+                process
+            });
+
+            // Wait a bit for the server to start
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            // Show modal with link to notebook
+            const url = `http://localhost:${port}/?access_token=${password}`;
+            console.log('Opening Marimo URL:', url);
+            
+            new MarimoLinkModal(this.app, url, file.basename).open();
+
+        } catch (error) {
+            console.error('Error opening Marimo notebook:', error);
+            new Notice(`Error opening Marimo notebook: ${error.message}`);
+        }
+    }
+
+    async openRemoteMarimoNotebook(file: TFile, node: GraphNode): Promise<void> {
+        try {
+            // Check if remote settings are configured
+            if (!this.settings.marimoRemoteHost || !this.settings.marimoRemoteUser || !this.settings.marimoRemoteKeyPath) {
+                new Notice('Remote notebook settings not configured. Please configure in settings.');
+                return;
+            }
+
+            // Generate random port and password
+            const localPort = generateRandomPort();
+            const remotePort = generateRandomPort();
+            const password = generateRandomPassword();
+            
+            // Get the absolute path from the vault adapter
+            const vaultPath = (this.app.vault.adapter as any).basePath;
+            const localPath = require('path').resolve(vaultPath, node.path);
+            
+            let remotePath: string;
+            if (this.settings.marimoRemoteSync) {
+                // Create a safe remote filename by replacing spaces with underscores
+                const safeRemoteFilename = file.name.replace(/\s+/g, '_');
+                remotePath = `/tmp/${safeRemoteFilename}`;
+            } else {
+                // Use the remote vault path and translate the local path
+                if (!this.settings.marimoRemoteVaultPath) {
+                    new Notice('Remote vault path not configured. Please configure in settings.');
+                    return;
+                }
+                // Get the relative path from the vault root
+                const relativePath = file.path;
+                remotePath = require('path').posix.join(this.settings.marimoRemoteVaultPath, relativePath);
+            }
+            
+            // Escape quotes in paths
+            const escapedLocalPath = localPath.replace(/(['"])/g, '\\$1');
+            const escapedKeyPath = this.settings.marimoRemoteKeyPath.replace(/(['"])/g, '\\$1');
+            
+            if (this.settings.marimoRemoteSync) {
+                // Build scp command with escaped paths
+                const scpCommand = `scp -i "${escapedKeyPath}" "${escapedLocalPath}" ${this.settings.marimoRemoteUser}@${this.settings.marimoRemoteHost}:${remotePath}`;
+                
+                console.log('Copying file to remote server:', scpCommand);
+                
+                // Run scp command
+                const { exec } = require('child_process');
+                await new Promise<void>((resolve, reject) => {
+                    exec(scpCommand, (error: any) => {
+                        if (error) {
+                            reject(error);
+                        } else {
+                            resolve();
+                        }
+                    });
+                });
+            }
+
+            // Replace placeholders in command
+            const remoteCommand = this.settings.marimoRemoteCommand
+                .replace('$FILEPATH', `"${remotePath}"`)
+                .replace('$PORT', remotePort.toString())
+                .replace('$PASSWORD', password);
+
+            // Create the SSH command with port forwarding and escaped paths
+            // Source shell initialization files to ensure PATH is set correctly
+            const sshCommand = `ssh -i "${escapedKeyPath}" -L ${localPort}:localhost:${remotePort} ${this.settings.marimoRemoteUser}@${this.settings.marimoRemoteHost} 'source ~/.zshrc 2>/dev/null || source ~/.bashrc 2>/dev/null; source ~/.profile 2>/dev/null; ${remoteCommand}'`;
+            
+            console.log('Running remote command:', sshCommand);
+
+            // Run the SSH command
+            const { exec } = require('child_process');
+            const process = exec(sshCommand, (error: any) => {
+                if (error) {
+                    console.error('Error running remote Marimo:', error);
+                    new Notice(`Error running remote Marimo: ${error.message}`);
+                    this.marimoInstances.delete(file.path);
+                }
+            });
+
+            let syncInterval: NodeJS.Timeout | undefined;
+            
+            if (this.settings.marimoRemoteSync) {
+                // Function to sync files in both directions
+                const syncFiles = async () => {
+                    const instance = this.marimoInstances.get(file.path);
+                    if (!instance) return;
+
+                    const now = Date.now();
+                    // Only sync if more than 1 second has passed since last sync
+                    if (instance.lastSyncTime && now - instance.lastSyncTime < 1000) {
+                        return;
+                    }
+
+                    try {
+                        // First, check if remote file is newer
+                        const checkCommand = `ssh -i "${escapedKeyPath}" ${this.settings.marimoRemoteUser}@${this.settings.marimoRemoteHost} "stat -f %m ${remotePath}"`;
+                        const remoteTimestamp = await new Promise<number>((resolve, reject) => {
+                            exec(checkCommand, (error: any, stdout: string) => {
+                                if (error) {
+                                    reject(error);
+                                } else {
+                                    resolve(parseInt(stdout.trim()));
+                                }
+                            });
+                        });
+
+                        const localStat = require('fs').statSync(localPath);
+                        
+                        if (remoteTimestamp > localStat.mtimeMs / 1000) {
+                            // Remote is newer, copy from remote to local
+                            const pullCommand = `scp -i "${escapedKeyPath}" ${this.settings.marimoRemoteUser}@${this.settings.marimoRemoteHost}:${remotePath} "${escapedLocalPath}"`;
+                            await new Promise<void>((resolve, reject) => {
+                                exec(pullCommand, (error: any) => {
+                                    if (error) {
+                                        reject(error);
+                                    } else {
+                                        resolve();
+                                    }
+                                });
+                            });
+                        } else {
+                            // Local is newer or same, copy to remote
+                            const pushCommand = `scp -i "${escapedKeyPath}" "${escapedLocalPath}" ${this.settings.marimoRemoteUser}@${this.settings.marimoRemoteHost}:${remotePath}`;
+                            await new Promise<void>((resolve, reject) => {
+                                exec(pushCommand, (error: any) => {
+                                    if (error) {
+                                        reject(error);
+                                    } else {
+                                        resolve();
+                                    }
+                                });
+                            });
+                        }
+                        
+                        instance.lastSyncTime = now;
+                    } catch (error) {
+                        console.error('Error syncing files:', error);
+                    }
+                };
+
+                // Set up periodic sync
+                syncInterval = setInterval(syncFiles, 1000);
+            }
+
+            // Store the instance information
+            this.marimoInstances.set(file.path, {
+                port: localPort,
+                password,
+                process,
+                remotePath,
+                syncInterval,
+                lastSyncTime: this.settings.marimoRemoteSync ? Date.now() : undefined
+            });
+
+            // Wait a bit for the server to start
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            // Show modal with link to notebook
+            const url = `http://localhost:${localPort}/?access_token=${password}`;
+            console.log('Opening Remote Marimo URL:', url);
+            
+            new MarimoLinkModal(this.app, url, file.basename).open();
+
+        } catch (error) {
+            console.error('Error opening remote Marimo notebook:', error);
+            new Notice(`Error opening remote Marimo notebook: ${error.message}`);
+        }
+    }
+
+    async executeDefaultPythonCommand(file: TFile): Promise<void> {
+        try {
+            const command = this.settings.fileTypeCommands['py'];
+            if (!command) {
+                console.log('No default Python command configured');
+                return;
+            }
+
+            // Get the absolute path
+            const vaultPath = (this.app.vault.adapter as any).basePath;
+            const filePath = require('path').resolve(vaultPath, file.path);
+            
+            // Replace filepath in command
+            const finalCommand = command.replace('$FILEPATH', `"${filePath}"`);
+            console.log('Running default Python command:', finalCommand);
+
+            const { exec } = require('child_process');
+            exec(finalCommand, (error: any) => {
+                if (error) {
+                    console.error('Error running command:', error);
+                    new Notice(`Error running command: ${error.message}`);
+                }
+            });
+        } catch (error) {
+            console.error('Error executing Python command:', error);
+            new Notice(`Error executing Python command: ${error.message}`);
+        }
+    }
+
+    async shutdownAllMarimoServers() {
+        let count = 0;
+        // Iterate through all running instances
+        for (const [path, instance] of this.marimoInstances) {
+            if (instance.process) {
+                try {
+                    // Kill the process
+                    instance.process.kill();
+                    if (instance.watchProcess) {
+                        instance.watchProcess.kill();
+                    }
+                    if (instance.syncInterval) {
+                        clearInterval(instance.syncInterval);
+                    }
+                    count++;
+                } catch (error) {
+                    console.error(`Error shutting down Marimo server for ${path}:`, error);
+                }
+            }
+        }
+        
+        // Clear the instances map
+        this.marimoInstances.clear();
+        
+        // Show notification
+        if (count > 0) {
+            new Notice(`Shut down ${count} Marimo server${count === 1 ? '' : 's'}`);
+        } else {
+            new Notice('No active Marimo servers to shut down');
+        }
+    }
+}
+
+class MarimoLinkModal extends Modal {
+    url: string;
+    filename: string;
+
+    constructor(app: App, url: string, filename: string) {
+        super(app);
+        this.url = url;
+        this.filename = filename;
+    }
+
+    onOpen() {
+        const {contentEl} = this;
+        contentEl.empty();
+        
+        contentEl.createEl('h2', {text: 'Open Marimo Notebook'});
+        
+        const container = contentEl.createDiv({cls: 'marimo-link-container'});
+        
+        container.createEl('p', {
+            text: `Click the link below to open "${this.filename}" in Marimo:`
+        });
+
+        const link = container.createEl('a', {
+            text: 'Open in Marimo',
+            href: this.url
+        });
+
+        // Close modal when link is clicked
+        link.addEventListener('click', () => {
+            this.close();
+        });
+    }
+
+    onClose() {
+        const {contentEl} = this;
+        contentEl.empty();
     }
 }
 
@@ -500,9 +885,13 @@ class MMSSettingTab extends PluginSettingTab {
         const { containerEl } = this;
         containerEl.empty();
 
+        // File Type Actions Section
         containerEl.createEl('h2', { text: 'File Type Actions' });
         containerEl.createEl('p', { text: 'Configure commands to run when clicking different file types. Leave empty to use default behavior.' });
-        containerEl.createEl('p', { text: 'Use $FILEPATH in your command where you want the file path to be inserted. For example: code "$FILEPATH" or open -a "Preview" "$FILEPATH"' });
+        containerEl.createEl('p', { text: 'Use $FILEPATH in your command to insert the absolute path to the file. The path will be automatically quoted to handle spaces, so you don\'t need to add quotes around $FILEPATH. For example:' });
+        containerEl.createEl('p', { text: '    code $FILEPATH', cls: 'setting-item-description' });
+        containerEl.createEl('p', { text: '    open -a Preview $FILEPATH', cls: 'setting-item-description' });
+        containerEl.createEl('p', { text: '    marimo edit $FILEPATH --port 2718', cls: 'setting-item-description' });
 
         const fileTypes = ['py', 'ipynb', 'qmd', 'nb', 'pdf'];
 
@@ -518,5 +907,123 @@ class MMSSettingTab extends PluginSettingTab {
                         await this.plugin.saveSettings();
                     }));
         }
+
+        // HTML Handling Section
+        containerEl.createEl('h2', { text: 'HTML Handling' });
+        new Setting(containerEl)
+            .setName('HTML Handling')
+            .setDesc('Choose how to handle HTML files')
+            .addDropdown(dropdown => dropdown
+                .addOption('obsidian', 'Open in Obsidian')
+                .addOption('browser', 'Open in default browser')
+                .setValue(this.plugin.settings.htmlBehavior)
+                .onChange(async (value: 'obsidian' | 'browser') => {
+                    this.plugin.settings.htmlBehavior = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        // Marimo Integration Section
+        containerEl.createEl('h2', { text: 'Marimo Integration' });
+        containerEl.createEl('p', { text: 'Configure how to handle Marimo Python notebooks. When enabled, .py files created as follow-ups will be treated as Marimo notebooks.' });
+
+        new Setting(containerEl)
+            .setName('Use Marimo')
+            .setDesc('Enable Marimo integration for Python files')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.useMarimo)
+                .onChange(async (value) => {
+                    this.plugin.settings.useMarimo = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        const marimoDesc = containerEl.createEl('p', { 
+            text: 'Available placeholders for Marimo commands:',
+            cls: 'setting-item-description'
+        });
+        containerEl.createEl('ul', {}).createEl('li', { 
+            text: '$FILEPATH - Path to the notebook file'
+        });
+        containerEl.createEl('ul', {}).createEl('li', { 
+            text: '$PORT - Random port number (generated each time)'
+        });
+        containerEl.createEl('ul', {}).createEl('li', { 
+            text: '$PASSWORD - Random password (generated each time)'
+        });
+
+        new Setting(containerEl)
+            .setName('Local Notebook Command')
+            .setDesc('Command to run when opening a Marimo notebook locally')
+            .addText(text => text
+                .setPlaceholder('marimo edit $FILEPATH --port $PORT --token-password $PASSWORD')
+                .setValue(this.plugin.settings.marimoLocalCommand)
+                .onChange(async (value) => {
+                    this.plugin.settings.marimoLocalCommand = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('Remote Notebook Command')
+            .setDesc('Command to run when opening a Marimo notebook remotely')
+            .addText(text => text
+                .setPlaceholder('Command for remote Marimo notebooks')
+                .setValue(this.plugin.settings.marimoRemoteCommand)
+                .onChange(async (value) => {
+                    this.plugin.settings.marimoRemoteCommand = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('Remote Host')
+            .setDesc('Hostname or IP address of the remote server')
+            .addText(text => text
+                .setPlaceholder('Remote host')
+                .setValue(this.plugin.settings.marimoRemoteHost)
+                .onChange(async (value) => {
+                    this.plugin.settings.marimoRemoteHost = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('Remote User')
+            .setDesc('Username for remote server authentication')
+            .addText(text => text
+                .setPlaceholder('Remote user')
+                .setValue(this.plugin.settings.marimoRemoteUser)
+                .onChange(async (value) => {
+                    this.plugin.settings.marimoRemoteUser = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('Remote Key Path')
+            .setDesc('Path to private key for remote server authentication')
+            .addText(text => text
+                .setPlaceholder('Remote key path')
+                .setValue(this.plugin.settings.marimoRemoteKeyPath)
+                .onChange(async (value) => {
+                    this.plugin.settings.marimoRemoteKeyPath = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('Remote Sync')
+            .setDesc('Enable bidirectional syncing of files between local and remote servers')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.marimoRemoteSync)
+                .onChange(async (value) => {
+                    this.plugin.settings.marimoRemoteSync = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('Remote Vault Path')
+            .setDesc('Path to the vault on the remote server')
+            .addText(text => text
+                .setPlaceholder('Remote vault path')
+                .setValue(this.plugin.settings.marimoRemoteVaultPath)
+                .onChange(async (value) => {
+                    this.plugin.settings.marimoRemoteVaultPath = value;
+                    await this.plugin.saveSettings();
+                }));
     }
 }

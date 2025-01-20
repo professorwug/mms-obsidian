@@ -1,6 +1,6 @@
 import { TFile, TFolder } from 'obsidian';
 
-interface GraphNode {
+export interface GraphNode {
     path: string;          // Primary path (first file found)
     name: string;          // Display name (without ID if present)
     id?: string;          // Folgezettel ID if present
