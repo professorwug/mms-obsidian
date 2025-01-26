@@ -27,6 +27,7 @@ interface MMSPluginSettings {
     marimoRemoteKeyPath: string;
     marimoRemoteSync: boolean;
     marimoRemoteVaultPath: string;
+    ignorePatterns: string[];
 }
 
 const DEFAULT_SETTINGS: MMSPluginSettings = {
@@ -39,13 +40,20 @@ const DEFAULT_SETTINGS: MMSPluginSettings = {
     },
     htmlBehavior: 'obsidian',
     useMarimo: false,
-    marimoLocalCommand: 'marimo edit $FILEPATH --port $PORT --token-password $PASSWORD',
-    marimoRemoteCommand: 'marimo edit $FILEPATH --port $PORT --token-password $PASSWORD',
+    marimoLocalCommand: 'marimo edit --watch $FILEPATH --port $PORT --token-password $PASSWORD --headless',
+    marimoRemoteCommand: 'marimo edit --watch $FILEPATH --port $PORT --token-password $PASSWORD --headless',
     marimoRemoteHost: '',
     marimoRemoteUser: '',
     marimoRemoteKeyPath: '',
     marimoRemoteSync: true,
-    marimoRemoteVaultPath: ''
+    marimoRemoteVaultPath: '',
+    ignorePatterns: [
+        '.*',           // Hidden files and directories
+        '__pycache__',  // Python cache directories (anywhere in path)
+        '*.pyc',        // Python compiled files
+        '.git',         // Git directory
+        '.obsidian'     // Obsidian settings directory
+    ]
 }
 
 function generateRandomPort(): number {
@@ -534,7 +542,7 @@ export default class MMSPlugin extends Plugin {
             const files = this.app.vault.getFiles();
             const folders = this.app.vault.getAllLoadedFiles().filter(f => f instanceof TFolder) as TFolder[];
             const items = [...files, ...folders];
-            this.fileGraph = buildFileGraph(items);
+            this.fileGraph = buildFileGraph(items, this.app);
         }
     }
 
@@ -1023,6 +1031,40 @@ class MMSSettingTab extends PluginSettingTab {
                 .setValue(this.plugin.settings.marimoRemoteVaultPath)
                 .onChange(async (value) => {
                     this.plugin.settings.marimoRemoteVaultPath = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        containerEl.createEl('h3', { text: 'Ignore Patterns' });
+        
+        const descEl = containerEl.createEl('p', { 
+            text: 'Specify patterns to ignore when building the graph. One pattern per line.'
+        });
+        
+        const examplesEl = containerEl.createEl('div', { cls: 'setting-item-description' });
+        examplesEl.createEl('div', { text: 'Examples:' });
+        const list = examplesEl.createEl('ul');
+        [
+            ['.*', 'Hidden files and directories'],
+            ['__pycache__', 'Python cache directories (anywhere in path)'],
+            ['*.pyc', 'Python compiled files'],
+            ['.git', 'Git directory'],
+            ['temp/*', 'Everything in temp directory'],
+            ['*.tmp', 'All files ending in .tmp']
+        ].forEach(([pattern, desc]) => {
+            list.createEl('li', {
+                text: `${pattern.padEnd(12)} - ${desc}`
+            });
+        });
+
+        new Setting(containerEl)
+            .addTextArea(text => text
+                .setPlaceholder('.*\n__pycache__\n*.pyc\n.git\n.obsidian')
+                .setValue(this.plugin.settings.ignorePatterns.join('\n'))
+                .onChange(async (value) => {
+                    this.plugin.settings.ignorePatterns = value
+                        .split('\n')
+                        .map(line => line.trim())
+                        .filter(line => line && !line.startsWith('#'));
                     await this.plugin.saveSettings();
                 }));
     }

@@ -407,7 +407,7 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
     const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(initialExpandedPaths);
     const [selectedPath, setSelectedPath] = React.useState<string | null>(initialSelectedPath);
     const [selectedPaths, setSelectedPaths] = React.useState<Set<string>>(new Set());
-    const graph = React.useMemo(() => buildFileGraph([...folders, ...files]), [files, folders]);
+    const graph = React.useMemo(() => buildFileGraph([...folders, ...files], app), [files, folders, app]);
 
     // Notify parent of state changes
     React.useEffect(() => {
@@ -596,7 +596,7 @@ export class FileBrowserView extends ItemView {
             .filter(f => f instanceof TFolder) as TFolder[];
         
         // Build new graph to check for surrogate->placeholder transitions
-        const newGraph = buildFileGraph([...folders, ...files]);
+        const newGraph = buildFileGraph([...folders, ...files], this.app);
         
         // Create a map of surrogate paths to their corresponding placeholder paths
         const surrogateToPlaceholder = new Map<string, string>();
