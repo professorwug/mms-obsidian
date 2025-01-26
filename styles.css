@@ -64,6 +64,11 @@ If your plugin does not need CSS, delete this file.
     text-underline-offset: 3px;
 }
 
+.file-item-content.is-multi-selected {
+    background-color: var(--background-modifier-hover);
+    border-left: 2px solid var(--interactive-accent);
+}
+
 .file-item .collapse-icon {
     margin-right: 6px;
     font-size: 10px;

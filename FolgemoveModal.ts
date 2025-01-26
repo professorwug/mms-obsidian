@@ -13,7 +13,19 @@ export class FolgemoveModal extends FuzzySuggestModal<TAbstractFile> {
         const folders = this.app.vault.getAllLoadedFiles()
             .filter(f => f instanceof TFolder) as TFolder[];
         
-        this.items = [...folders, ...files];
+        // Sort folders and files separately by path length
+        const sortedFolders = folders.sort((a, b) => {
+            const lenDiff = a.path.length - b.path.length;
+            return lenDiff !== 0 ? lenDiff : a.path.localeCompare(b.path);
+        });
+        
+        const sortedFiles = files.sort((a, b) => {
+            const lenDiff = a.path.length - b.path.length;
+            return lenDiff !== 0 ? lenDiff : a.path.localeCompare(b.path);
+        });
+
+        // Combine with folders first
+        this.items = [...sortedFolders, ...sortedFiles];
     }
 
     getItems(): TAbstractFile[] {

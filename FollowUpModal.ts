@@ -1,6 +1,6 @@
 import { App, Modal, Setting } from 'obsidian';
 
-export type NoteType = 'searching' | 'mapping' | 'planning';
+export type NoteType = 'searching' | 'mapping' | 'planning' | 'marimo';
 
 interface FollowUpResult {
     name: string;
@@ -53,6 +53,7 @@ export class FollowUpModal extends Modal {
                     .addOption('searching', 'Searching')
                     .addOption('mapping', 'Mapping')
                     .addOption('planning', 'Planning')
+                    .addOption('marimo', 'Marimo (py)')
                     .setValue(this.result.type)
                     .onChange(value => {
                         this.result.type = value as NoteType;

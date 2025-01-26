@@ -1,8 +1,33 @@
-import { ItemView, TFile, TFolder, WorkspaceLeaf, Menu, TAbstractFile } from 'obsidian';
+import { ItemView, TFile, TFolder, WorkspaceLeaf, Menu, TAbstractFile, Notice, App } from 'obsidian';
 import * as React from 'react';
-import { createRoot } from 'react-dom/client';
-import { buildFileGraph, FileGraph } from './FileGraph';
+import { createRoot, Root } from 'react-dom/client';
+import { buildFileGraph, FileGraph, GraphNode } from './FileGraph';
 import MMSPlugin from './main';
+import { FolgemoveModal } from './FolgemoveModal';
+
+interface FileTypeCommands {
+    [key: string]: string;
+}
+
+interface MMSPluginSettings {
+    fileTypeCommands: FileTypeCommands;
+    htmlBehavior: 'obsidian' | 'browser';
+    useMarimo: boolean;
+    marimoRemoteCommand?: string;
+    marimoRemoteHost?: string;
+    marimoRemoteUser?: string;
+    marimoRemoteKeyPath?: string;
+}
+
+interface IMMSPlugin {
+    settings: MMSPluginSettings;
+    app: App;
+    createFollowUpNote: (file: TFile) => void;
+    folgemove: (file: TFile, targetPath: string) => void;
+    openMarimoNotebook: (file: TFile) => void;
+    openRemoteMarimoNotebook: (file: TFile, node: GraphNode) => void;
+    executeDefaultPythonCommand: (file: TFile) => void;
+}
 
 interface FileItemProps {
     path: string;
@@ -12,9 +37,11 @@ interface FileItemProps {
     onToggle: (path: string) => void;
     expandedPaths: Set<string>;
     selectedPath: string | null;
-    onSelect: (path: string) => void;
+    selectedPaths: Set<string>;
+    onSelect: (path: string, isMultiSelect: boolean) => void;
     onFileClick: (path: string) => void;
-    plugin: MMSPlugin;
+    plugin: IMMSPlugin;
+    app: App;
 }
 
 const FileItem: React.FC<FileItemProps> = ({ 
@@ -25,9 +52,11 @@ const FileItem: React.FC<FileItemProps> = ({
     onToggle,
     expandedPaths,
     selectedPath,
+    selectedPaths,
     onSelect,
     onFileClick,
-    plugin
+    plugin,
+    app
 }) => {
     const node = graph.nodes.get(path);
     if (!node) return null;
@@ -36,6 +65,7 @@ const FileItem: React.FC<FileItemProps> = ({
     const expanded = expandedPaths.has(path);
     const displayName = node.id ? `${node.id} ${node.name}` : node.name;
     const isSelected = selectedPath === path;
+    const isMultiSelected = selectedPaths.has(path);
 
     // Check if this node has any mapping or planning children
     const hasMappingChild = hasChildren && children.some(childPath => {
@@ -50,7 +80,7 @@ const FileItem: React.FC<FileItemProps> = ({
     const handleClick = async (e: React.MouseEvent) => {
         console.log('Main item clicked:', path);
         e.stopPropagation();
-        onSelect(path);
+        onSelect(path, e.ctrlKey || e.metaKey);
         
         const node = graph.nodes.get(path);
         if (!node) return;
@@ -117,7 +147,7 @@ const FileItem: React.FC<FileItemProps> = ({
             console.log('Creating file at:', newFilePath);
             
             try {
-                await app.vault.create(newFilePath, '');
+                await plugin.app.vault.create(newFilePath, '');
                 console.log('Created new file:', newFilePath);
 
                 // If the surrogate was expanded, expand the new placeholder file
@@ -129,14 +159,14 @@ const FileItem: React.FC<FileItemProps> = ({
                         newExpandedPaths.delete(path);
                         // Add the new placeholder path
                         newExpandedPaths.add(newFilePath);
-                        setExpandedPaths(newExpandedPaths);
+                        onToggle(newFilePath); // Use onToggle instead of setExpandedPaths
                     }, 100);
                 }
 
                 // Open the new file in a new tab
-                const file = app.vault.getAbstractFileByPath(newFilePath);
+                const file = plugin.app.vault.getAbstractFileByPath(newFilePath);
                 if (file instanceof TFile) {
-                    await app.workspace.getLeaf('tab').openFile(file);
+                    await plugin.app.workspace.getLeaf('tab').openFile(file);
                 }
             } catch (error) {
                 console.error('Error creating file:', error);
@@ -156,6 +186,7 @@ const FileItem: React.FC<FileItemProps> = ({
         if (node.extensions.size > 0) {
             const mdPath = Array.from(node.paths).find(p => p.toLowerCase().endsWith('.md'));
             console.log('Looking for preferred .md file:', mdPath);
+            
             if (mdPath) {
                 onFileClick(mdPath);
             } else {
@@ -169,24 +200,84 @@ const FileItem: React.FC<FileItemProps> = ({
     const handleContextMenu = (e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
-        
-        const menu = new Menu();
 
+        const menu = new Menu();
+        const node = graph.nodes.get(path);
+
+        if (!node) return;
+
+        // Add "Create Follow Up" option if it's a file
         if (!node.isDirectory) {
-            menu.addItem(item => 
-                item
-                    .setTitle("Create Follow Up Note")
-                    .setIcon("plus")
-                    .onClick(() => {
-                        const file = plugin.app.vault.getAbstractFileByPath(path);
-                        if (file instanceof TFile) {
+            const file = app.vault.getAbstractFileByPath(path);
+            if (file instanceof TFile) {
+                menu.addItem((item) => {
+                    item
+                        .setTitle("Create Follow Up")
+                        .setIcon("plus")
+                        .onClick(() => {
                             plugin.createFollowUpNote(file);
-                        }
-                    })
-            );
+                        });
+                });
+
+                // Add Python-specific options if it's a Python file
+                if (path.endsWith('.py')) {
+                    menu.addSeparator();
+
+                    if (plugin.settings.useMarimo) {
+                        // Add Marimo options
+                        menu.addItem((item) => {
+                            item
+                                .setTitle("Open in Marimo")
+                                .setIcon("code")
+                                .onClick(async () => {
+                                    await plugin.openMarimoNotebook(file);
+                                });
+                        });
+                    }
+
+                    // Add default Python command if configured
+                    if (plugin.settings.fileTypeCommands['py']) {
+                        menu.addItem((item) => {
+                            item
+                                .setTitle("Open in Default Editor")
+                                .setIcon("edit")
+                                .onClick(async () => {
+                                    await plugin.executeDefaultPythonCommand(file);
+                                });
+                        });
+                    }
+
+                    // Add remote notebook option if configured
+                    if (plugin.settings.marimoRemoteHost && plugin.settings.marimoRemoteUser && plugin.settings.marimoRemoteKeyPath) {
+                        menu.addItem((item) => {
+                            item
+                                .setTitle("Open as Remote Notebook")
+                                .setIcon("globe")
+                                .onClick(async () => {
+                                    await plugin.openRemoteMarimoNotebook(file, node);
+                                });
+                        });
+                    }
+                }
+            }
         }
 
-        menu.showAtMouseEvent(e as any);
+        // Add folgemove option
+        menu.addSeparator();
+        menu.addItem((item) => {
+            item
+                .setTitle("Move with Children")
+                .setIcon("folder-move")
+                .onClick(() => {
+                    const file = app.vault.getAbstractFileByPath(path);
+                    if (file) {
+                        const modal = new FolgemoveModal(app);
+                        modal.open();
+                    }
+                });
+        });
+
+        menu.showAtMouseEvent(e.nativeEvent);
     };
 
     const handleExtensionClick = (e: React.MouseEvent, ext: string) => {
@@ -211,7 +302,7 @@ const FileItem: React.FC<FileItemProps> = ({
             <div className={`file-item ${hasChildren ? 'has-children' : ''} ${node.isDirectory ? 'is-folder' : ''}`}>
                 <div className="file-item-indent" style={{ width: `${depth * 20}px` }} />
                 <div 
-                    className={`file-item-content ${isSelected ? 'is-selected' : ''} ${
+                    className={`file-item-content ${isSelected ? 'is-selected' : ''} ${isMultiSelected ? 'is-multi-selected' : ''} ${
                         node.nodeType ? `is-${node.nodeType}-node` : ''
                     }`}
                     onClick={handleClick}
@@ -268,7 +359,7 @@ const FileItem: React.FC<FileItemProps> = ({
                             const childNode = graph.nodes.get(childPath);
                             if (!childNode) return null;
 
-                            const children = Array.from(graph.edges.get(childPath) || new Set());
+                            const children = Array.from(graph.edges.get(childPath) || []) as string[];
                             
                             return (
                                 <FileItem
@@ -280,9 +371,11 @@ const FileItem: React.FC<FileItemProps> = ({
                                     onToggle={onToggle}
                                     expandedPaths={expandedPaths}
                                     selectedPath={selectedPath}
+                                    selectedPaths={selectedPaths}
                                     onSelect={onSelect}
                                     onFileClick={onFileClick}
                                     plugin={plugin}
+                                    app={app}
                                 />
                             );
                         })}
@@ -295,8 +388,8 @@ const FileItem: React.FC<FileItemProps> = ({
 interface FileBrowserComponentProps {
     files: TFile[];
     folders: TFolder[];
-    app: any;
-    plugin: MMSPlugin;
+    app: App;
+    plugin: IMMSPlugin;
     initialExpandedPaths: Set<string>;
     initialSelectedPath: string | null;
     onStateChange?: (expandedPaths: Set<string>, selectedPath: string | null, graph: FileGraph) => void;
@@ -313,7 +406,8 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
 }) => {
     const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(initialExpandedPaths);
     const [selectedPath, setSelectedPath] = React.useState<string | null>(initialSelectedPath);
-    const graph = React.useMemo(() => buildFileGraph([...folders, ...files]), [files, folders]);
+    const [selectedPaths, setSelectedPaths] = React.useState<Set<string>>(new Set());
+    const graph = React.useMemo(() => buildFileGraph([...folders, ...files], app), [files, folders, app]);
 
     // Notify parent of state changes
     React.useEffect(() => {
@@ -329,6 +423,23 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         }
         setExpandedPaths(newExpandedPaths);
     };
+
+    const handleSelect = React.useCallback((path: string, isMultiSelect: boolean) => {
+        if (isMultiSelect) {
+            setSelectedPaths(prev => {
+                const newPaths = new Set(prev);
+                if (newPaths.has(path)) {
+                    newPaths.delete(path);
+                } else {
+                    newPaths.add(path);
+                }
+                return newPaths;
+            });
+        } else {
+            setSelectedPath(path);
+            setSelectedPaths(new Set([path]));
+        }
+    }, []);
 
     const handleFileClick = async (path: string) => {
         console.log('File click handler called with path:', path);
@@ -349,21 +460,57 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         const command = plugin.settings.fileTypeCommands[extension];
         console.log('Found command from settings:', command);
         
-        if (extension === 'md' || extension === 'pdf' || !command) {
+        // Ignore Python files on direct click - they must be opened via context menu
+        if (extension === 'py') {
+            return;
+        }
+        
+        if (extension === 'md' || extension === 'pdf' || (!command && extension !== 'html')) {
             // Default behavior: open in Obsidian in a new tab
             console.log('Opening in Obsidian:', path);
             const file = app.vault.getAbstractFileByPath(path);
             if (file instanceof TFile) {
                 await app.workspace.getLeaf('tab').openFile(file);
             }
-        } else {
-            // Get absolute path by combining vault path with relative path
-            const vaultPath = app.vault.adapter.getBasePath();
-            const absolutePath = `${vaultPath}/${path}`;
+        } else if (extension === 'html') {
+            // Handle HTML files according to settings
+            const file = app.vault.getAbstractFileByPath(path);
+            if (!(file instanceof TFile)) {
+                console.error('File not found:', path);
+                return;
+            }
+
+            if (plugin.settings.htmlBehavior === 'obsidian') {
+                // Open in Obsidian by simulating a link click
+                console.log('Opening HTML file in Obsidian via link:', path);
+                await app.workspace.openLinkText(file.path, '', true, { active: true });
+            } else {
+                // Open in default browser
+                const absolutePath = (app.vault.adapter as any).basePath;
+                const filePath = require('path').resolve(absolutePath, file.path);
+                const { exec } = require('child_process');
+                exec(`open "${filePath}"`, (error: any) => {
+                    if (error) {
+                        console.error('Error opening HTML file:', error);
+                        new Notice(`Error opening HTML file: ${error.message}`);
+                    }
+                });
+            }
+        } else if (command) {
+            // Handle other file types with custom commands
+            const file = app.vault.getAbstractFileByPath(path);
+            if (!(file instanceof TFile)) {
+                console.error('File not found:', path);
+                return;
+            }
+
+            // Get the absolute path by combining vault path with file path
+            const vaultPath = (app.vault.adapter as any).basePath;
+            const absolutePath = require('path').resolve(vaultPath, file.path);
             console.log('Converting to absolute path:', absolutePath);
 
             // Run the configured command with absolute path
-            const finalCommand = command.replace('$FILEPATH', absolutePath);
+            const finalCommand = command.replace('$FILEPATH', `"${absolutePath}"`);
             console.log('Running command:', finalCommand);
             const { exec } = require('child_process');
             exec(finalCommand, (error: any) => {
@@ -378,7 +525,7 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
     };
 
     const rootChildren = React.useMemo(() => 
-        Array.from(graph.edges.get('/') || []), [graph]
+        Array.from(graph.edges.get('/') || []) as string[], [graph]
     );
 
     return (
@@ -391,7 +538,7 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                     const childNode = graph.nodes.get(childPath);
                     if (!childNode) return null;
 
-                    const children = Array.from(graph.edges.get(childPath) || new Set());
+                    const children = Array.from(graph.edges.get(childPath) || []) as string[];
                     
                     return (
                         <FileItem
@@ -403,9 +550,11 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                             onToggle={handleToggle}
                             expandedPaths={expandedPaths}
                             selectedPath={selectedPath}
-                            onSelect={setSelectedPath}
+                            selectedPaths={selectedPaths}
+                            onSelect={handleSelect}
                             onFileClick={handleFileClick}
                             plugin={plugin}
+                            app={app}
                         />
                     );
                 })}
@@ -416,12 +565,12 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
 
 export class FileBrowserView extends ItemView {
     private root: Root | null = null;
-    private plugin: MMSPlugin;
+    private plugin: IMMSPlugin;
     private currentExpandedPaths: Set<string> = new Set();
     private currentSelectedPath: string | null = null;
     private currentGraph: FileGraph | null = null;
 
-    constructor(leaf: WorkspaceLeaf, plugin: MMSPlugin) {
+    constructor(leaf: WorkspaceLeaf, plugin: IMMSPlugin) {
         super(leaf);
         this.plugin = plugin;
     }
@@ -447,7 +596,7 @@ export class FileBrowserView extends ItemView {
             .filter(f => f instanceof TFolder) as TFolder[];
         
         // Build new graph to check for surrogate->placeholder transitions
-        const newGraph = buildFileGraph([...folders, ...files]);
+        const newGraph = buildFileGraph([...folders, ...files], this.app);
         
         // Create a map of surrogate paths to their corresponding placeholder paths
         const surrogateToPlaceholder = new Map<string, string>();
@@ -529,5 +678,10 @@ export class FileBrowserView extends ItemView {
             this.root.unmount();
             this.root = null;
         }
+    }
+
+    // Public method to access the current graph
+    public getCurrentGraph(): FileGraph | null {
+        return this.currentGraph;
     }
 }
