@@ -1,4 +1,5 @@
-import { TFile, TFolder } from 'obsidian';
+import { TFile, TFolder, App } from 'obsidian';
+import { minimatch } from 'minimatch';
 
 interface GraphNode {
     path: string;          // Primary path (first file found)
@@ -141,7 +142,35 @@ function addParentEdgesToGraph(
     }
 }
 
-export function buildFileGraph(items: Array<TFile | TFolder>): FileGraph {
+function shouldIgnorePath(path: string, patterns: string[]): boolean {
+    if (path === '/') return false; // Never ignore root
+    
+    for (const pattern of patterns) {
+        const trimmedPattern = pattern.trim();
+        if (!trimmedPattern) continue;
+
+        // For __pycache__ and similar directory patterns, match if they appear anywhere in the path
+        if (trimmedPattern === '__pycache__' && path.includes('__pycache__')) {
+            console.log(`Ignoring path ${path} - contains __pycache__`);
+            return true;
+        }
+
+        // For other patterns, use minimatch
+        const fullPattern = trimmedPattern.startsWith('**/') ? trimmedPattern : `**/${trimmedPattern}`;
+        if (minimatch(path, fullPattern, { dot: true })) {
+            console.log(`Ignoring path ${path} - matched pattern ${fullPattern}`);
+            return true;
+        }
+    }
+    return false;
+}
+
+export function buildFileGraph(items: Array<TFile | TFolder>, app: App): FileGraph {
+    // Get plugin instance and settings
+    const plugin = (app as any).plugins.getPlugin('mms');
+    const ignorePatterns = plugin?.settings?.ignorePatterns || [];
+    console.log('Building graph with ignore patterns:', ignorePatterns);
+
     const graph: FileGraph = {
         nodes: new Map(),
         edges: new Map()
@@ -162,8 +191,15 @@ export function buildFileGraph(items: Array<TFile | TFolder>): FileGraph {
     // Sort items by path (ensures parents processed before children)
     const sortedItems = [...items].sort((a, b) => a.path.localeCompare(b.path));
     
+    let ignoredCount = 0;
     // Process each item
     for (const item of sortedItems) {
+        // Check if this item should be ignored
+        if (shouldIgnorePath(item.path, ignorePatterns)) {
+            ignoredCount++;
+            continue;
+        }
+
         const isDirectory = item instanceof TFolder;
         
         // Parse name and ID, using basename for files
@@ -226,6 +262,8 @@ export function buildFileGraph(items: Array<TFile | TFolder>): FileGraph {
             item.parent ? item.parent.path : '/'
         );
     }
+
+    console.log(`Filtered ${ignoredCount} items based on ignore patterns`);
 
     return graph;
 }

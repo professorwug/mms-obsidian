@@ -1,11 +1,11 @@
 {
 	"id": "mms",
-	"name": "MMS",
-	"version": "0.0.3",
-	"minAppVersion": "0.15.0",
-	"description": "Maps, Metaphors, Searches.",
-	"author": "Boreas",
-	"authorUrl": "https://obsidian.md",
+	"name": "Maps, Masterplans & Searches",
+	"version": "0.0.8",
+	"minAppVersion": "1.4.0",
+	"description": "Browse your notes hierarchically based on folgezettel IDs, and code in a computational zettelkasten!",
+	"author": "Riddle",
+	"authorUrl": "https://riddle.press",
 	"fundingUrl": "https://obsidian.md/pricing",
-	"isDesktopOnly": false
+	"isDesktopOnly": true
 }
