@@ -2,6 +2,7 @@ import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Set
 import { FileBrowserView } from './FileBrowserView';
 import { FolgemoveModal } from './FolgemoveModal';
 import { FollowUpModal } from './FollowUpModal';
+import { RenameModal } from './RenameModal';
 import { getNextAvailableChildId } from './utils';
 import { FileGraph, buildFileGraph, GraphNode } from './FileGraph';
 
@@ -78,8 +79,20 @@ interface MarimoInstance {
     lastSyncTime?: number; // Last time the file was synced
 }
 
-export default class MMSPlugin extends Plugin {
+interface IMMSPlugin {
     settings: MMSPluginSettings;
+    app: App;
+    createFollowUpNote: (file: TFile) => void;
+    folgemove: (file: TFile, targetPath: string) => void;
+    openMarimoNotebook: (file: TFile) => void;
+    openRemoteMarimoNotebook: (file: TFile, node: GraphNode) => void;
+    executeDefaultPythonCommand: (file: TFile) => void;
+    renameFileWithExtensions: (file: TFile, newName: string) => Promise<void>;
+}
+
+export default class MMSPlugin extends Plugin implements IMMSPlugin {
+    settings: MMSPluginSettings;
+    app: App;
     private views: FileBrowserView[] = [];
     private fileGraph: FileGraph;
     private marimoInstances: Map<string, MarimoInstance> = new Map();
@@ -211,6 +224,25 @@ export default class MMSPlugin extends Plugin {
             name: 'Shutdown All Marimo Servers',
             callback: () => {
                 this.shutdownAllMarimoServers();
+            }
+        });
+
+        // Add Rename with Extensions command
+        this.addCommand({
+            id: 'rename-with-extensions',
+            name: 'Rename file and its extension variants',
+            checkCallback: (checking: boolean) => {
+                const activeFile = this.app.workspace.getActiveFile();
+                if (activeFile) {
+                    if (!checking) {
+                        const modal = new RenameModal(this.app, activeFile, async (newName: string) => {
+                            await this.renameFileWithExtensions(activeFile, newName);
+                        });
+                        modal.open();
+                    }
+                    return true;
+                }
+                return false;
             }
         });
 
@@ -823,6 +855,60 @@ export default class MMSPlugin extends Plugin {
         } else {
             new Notice('No active Marimo servers to shut down');
         }
+    }
+
+    async renameFileWithExtensions(file: TFile, newName: string) {
+        // Get the file graph from the active view
+        const activeView = this.views[0];
+        if (!activeView) {
+            new Notice('File browser view not found');
+            return;
+        }
+
+        const fileGraph = activeView.getCurrentGraph();
+        if (!fileGraph) {
+            new Notice('File graph not found');
+            return;
+        }
+
+        const node = fileGraph.nodes.get(file.path);
+        if (!node) {
+            new Notice(`Could not find file ${file.path} in the file graph`);
+            return;
+        }
+
+        // Get all files with different extensions
+        const filesToRename = Array.from(node.extensions).map(ext => {
+            const fullPath = node.paths.values().next().value;
+            const basePath = fullPath.substring(0, fullPath.lastIndexOf('/') + 1);
+            const currentName = fullPath.substring(fullPath.lastIndexOf('/') + 1);
+            const baseNameWithoutExt = currentName.substring(0, currentName.lastIndexOf('.'));
+            return this.app.vault.getAbstractFileByPath(basePath + baseNameWithoutExt + '.' + ext);
+        }).filter((f): f is TFile => f instanceof TFile);
+
+        if (filesToRename.length === 0) {
+            new Notice(`No files found to rename`);
+            return;
+        }
+
+        // Rename all files
+        for (const fileToRename of filesToRename) {
+            const oldPath = fileToRename.path;
+            const extension = fileToRename.extension;
+            const newPath = oldPath.substring(0, oldPath.lastIndexOf('/') + 1) + newName + '.' + extension;
+            
+            try {
+                await this.app.fileManager.renameFile(fileToRename, newPath);
+            } catch (error) {
+                new Notice(`Failed to rename ${oldPath} to ${newPath}: ${error}`);
+                return;
+            }
+        }
+
+        // Trigger a refresh of the file browser view
+        activeView.refreshPreservingState();
+
+        new Notice(`Successfully renamed ${filesToRename.length} files`);
     }
 }
 

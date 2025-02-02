@@ -4,6 +4,7 @@ import { createRoot, Root } from 'react-dom/client';
 import { buildFileGraph, FileGraph, GraphNode } from './FileGraph';
 import MMSPlugin from './main';
 import { FolgemoveModal } from './FolgemoveModal';
+import { RenameModal } from './RenameModal';
 
 interface FileTypeCommands {
     [key: string]: string;
@@ -27,6 +28,7 @@ interface IMMSPlugin {
     openMarimoNotebook: (file: TFile) => void;
     openRemoteMarimoNotebook: (file: TFile, node: GraphNode) => void;
     executeDefaultPythonCommand: (file: TFile) => void;
+    renameFileWithExtensions: (file: TFile, newName: string) => Promise<void>;
 }
 
 interface FileItemProps {
@@ -206,16 +208,28 @@ const FileItem: React.FC<FileItemProps> = ({
 
         if (!node) return;
 
-        // Add "Create Follow Up" option if it's a file
+        // Add "Create Follow-up Note" option if it's a file
         if (!node.isDirectory) {
             const file = app.vault.getAbstractFileByPath(path);
             if (file instanceof TFile) {
                 menu.addItem((item) => {
                     item
-                        .setTitle("Create Follow Up")
-                        .setIcon("plus")
+                        .setTitle("Create Follow-up Note")
+                        .setIcon("file-plus")
                         .onClick(() => {
                             plugin.createFollowUpNote(file);
+                        });
+                });
+
+                menu.addItem((item) => {
+                    item
+                        .setTitle("Rename with Extensions")
+                        .setIcon("pencil")
+                        .onClick(() => {
+                            const modal = new RenameModal(app, file, async (newName: string) => {
+                                await plugin.renameFileWithExtensions(file, newName);
+                            });
+                            modal.open();
                         });
                 });
 
