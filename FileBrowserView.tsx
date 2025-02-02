@@ -421,7 +421,7 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
     const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(initialExpandedPaths);
     const [selectedPath, setSelectedPath] = React.useState<string | null>(initialSelectedPath);
     const [selectedPaths, setSelectedPaths] = React.useState<Set<string>>(new Set());
-    const graph = React.useMemo(() => buildFileGraph([...folders, ...files], app), [files, folders, app]);
+    const graph = (plugin as MMSPlugin).getActiveGraph();
 
     // Notify parent of state changes
     React.useEffect(() => {
@@ -597,28 +597,22 @@ export class FileBrowserView extends ItemView {
         return 'Folgezettel Browser';
     }
 
-    // Method to preserve and restore view state during refresh
     async refreshPreservingState() {
-        // Store current state before refresh
         const expandedPaths = this.currentExpandedPaths;
         const selectedPath = this.currentSelectedPath;
         const oldGraph = this.currentGraph;
 
-        // Get fresh file list and rebuild graph
         const files = this.app.vault.getFiles();
         const folders = this.app.vault.getAllLoadedFiles()
             .filter(f => f instanceof TFolder) as TFolder[];
+
+        const newGraph = (this.plugin as MMSPlugin).getActiveGraph();
         
-        // Build new graph to check for surrogate->placeholder transitions
-        const newGraph = buildFileGraph([...folders, ...files], this.app);
-        
-        // Create a map of surrogate paths to their corresponding placeholder paths
         const surrogateToPlaceholder = new Map<string, string>();
         if (oldGraph) {
             expandedPaths.forEach(path => {
                 const oldNode = oldGraph.nodes.get(path);
                 if (oldNode?.isSurrogate && oldNode.id) {
-                    // Look for a placeholder file with this ID in the new graph
                     const placeholderPath = Array.from(newGraph.nodes.entries()).find(([_, node]) => 
                         !node.isSurrogate && 
                         node.path.endsWith(`${oldNode.id} Placeholder.md`)
@@ -631,20 +625,17 @@ export class FileBrowserView extends ItemView {
             });
         }
 
-        // Update expanded paths to use placeholder paths instead of surrogate paths
         const updatedExpandedPaths = new Set<string>();
         expandedPaths.forEach(path => {
             const newPath = surrogateToPlaceholder.get(path) || path;
             updatedExpandedPaths.add(newPath);
         });
 
-        // Update selected path if it was a surrogate that's now a placeholder
         let updatedSelectedPath = selectedPath;
         if (selectedPath) {
             updatedSelectedPath = surrogateToPlaceholder.get(selectedPath) || selectedPath;
         }
-        
-        // Re-render with preserved state
+
         if (this.root) {
             this.root.render(
                 <FileBrowserComponent
@@ -654,22 +645,32 @@ export class FileBrowserView extends ItemView {
                     plugin={this.plugin}
                     initialExpandedPaths={updatedExpandedPaths}
                     initialSelectedPath={updatedSelectedPath}
-                    onStateChange={(expandedPaths, selectedPath, graph) => {
-                        this.currentExpandedPaths = expandedPaths;
-                        this.currentSelectedPath = selectedPath;
-                        this.currentGraph = graph;
-                    }}
+                    onStateChange={this.handleStateChange}
                 />
             );
         }
     }
 
+    private handleStateChange = (expandedPaths: Set<string>, selectedPath: string | null, graph: FileGraph) => {
+        this.currentExpandedPaths = expandedPaths;
+        this.currentSelectedPath = selectedPath;
+        this.currentGraph = graph;
+    };
+
     async onOpen() {
+        const container = this.containerEl.children[1];
+        container.empty();
+        
+        (this.plugin as MMSPlugin).subscribeToGraphUpdates((graph) => {
+            this.currentGraph = graph;
+            this.refreshPreservingState();
+        });
+
         const files = this.app.vault.getFiles();
         const folders = this.app.vault.getAllLoadedFiles()
             .filter(f => f instanceof TFolder) as TFolder[];
 
-        this.root = createRoot(this.containerEl.children[1]);
+        this.root = createRoot(container);
         this.root.render(
             <FileBrowserComponent
                 files={files}
@@ -678,24 +679,24 @@ export class FileBrowserView extends ItemView {
                 plugin={this.plugin}
                 initialExpandedPaths={new Set()}
                 initialSelectedPath={null}
-                onStateChange={(expandedPaths, selectedPath, graph) => {
-                    this.currentExpandedPaths = expandedPaths;
-                    this.currentSelectedPath = selectedPath;
-                    this.currentGraph = graph;
-                }}
+                onStateChange={this.handleStateChange}
             />
         );
     }
 
     async onClose() {
+        (this.plugin as MMSPlugin).unsubscribeFromGraphUpdates((graph) => {
+            this.currentGraph = graph;
+            this.refreshPreservingState();
+        });
+
         if (this.root) {
             this.root.unmount();
             this.root = null;
         }
     }
 
-    // Public method to access the current graph
-    public getCurrentGraph(): FileGraph | null {
+    getCurrentGraph(): FileGraph | null {
         return this.currentGraph;
     }
 }

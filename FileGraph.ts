@@ -151,14 +151,12 @@ function shouldIgnorePath(path: string, patterns: string[]): boolean {
 
         // For __pycache__ and similar directory patterns, match if they appear anywhere in the path
         if (trimmedPattern === '__pycache__' && path.includes('__pycache__')) {
-            console.log(`Ignoring path ${path} - contains __pycache__`);
             return true;
         }
 
         // For other patterns, use minimatch
         const fullPattern = trimmedPattern.startsWith('**/') ? trimmedPattern : `**/${trimmedPattern}`;
         if (minimatch(path, fullPattern, { dot: true })) {
-            console.log(`Ignoring path ${path} - matched pattern ${fullPattern}`);
             return true;
         }
     }

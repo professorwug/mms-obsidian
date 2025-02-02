@@ -92,10 +92,10 @@ interface IMMSPlugin {
 
 export default class MMSPlugin extends Plugin implements IMMSPlugin {
     settings: MMSPluginSettings;
-    app: App;
     private views: FileBrowserView[] = [];
-    private fileGraph: FileGraph;
+    private fileGraph: FileGraph | null = null;
     private marimoInstances: Map<string, MarimoInstance> = new Map();
+    private graphUpdateCallbacks: Set<(graph: FileGraph) => void> = new Set();
 
     async onload() {
         await this.loadSettings();
@@ -110,15 +110,26 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             }
         );
 
-        // Register file system event handlers
+        // Register file system event handlers with debounced graph update
+        let updateTimeout: NodeJS.Timeout | null = null;
+        const debouncedUpdate = () => {
+            if (updateTimeout) {
+                clearTimeout(updateTimeout);
+            }
+            updateTimeout = setTimeout(() => {
+                this.updateGraph();
+                this.refreshViews();
+            }, 100); // Debounce graph updates
+        };
+
         this.registerEvent(
-            this.app.vault.on('create', () => this.refreshViews())
+            this.app.vault.on('create', debouncedUpdate)
         );
         this.registerEvent(
-            this.app.vault.on('delete', () => this.refreshViews())
+            this.app.vault.on('delete', debouncedUpdate)
         );
         this.registerEvent(
-            this.app.vault.on('rename', () => this.refreshViews())
+            this.app.vault.on('rename', debouncedUpdate)
         );
 
         // Add a ribbon icon for the Folgezettel Browser
@@ -299,56 +310,53 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         });
     }
 
-    private getActiveGraph(): FileGraph {
-        const fileBrowserView = this.views.find(view => view instanceof FileBrowserView) as FileBrowserView;
-        if (!fileBrowserView) {
-            throw new Error('File browser not initialized');
-        }
-        const currentGraph = fileBrowserView.getCurrentGraph();
-        if (!currentGraph) {
-            throw new Error('Graph not initialized');
-        }
-        return currentGraph;
+    // Method to update the central graph and notify subscribers
+    private updateGraph() {
+        const files = this.app.vault.getFiles();
+        const folders = this.app.vault.getAllLoadedFiles().filter(f => f instanceof TFolder) as TFolder[];
+        const items = [...files, ...folders];
+        const newGraph = buildFileGraph(items, this.app);
+        this.fileGraph = newGraph;
+        
+        // Notify all subscribers of the new graph
+        this.graphUpdateCallbacks.forEach(callback => callback(newGraph));
     }
 
-    private async waitForGraphUpdate(timeout = 2000): Promise<void> {
-        console.log(`[WaitForGraph] Waiting for graph update`);
-        const fileBrowserView = this.views.find(view => view instanceof FileBrowserView) as FileBrowserView;
-        if (!fileBrowserView) {
-            throw new Error('File browser not initialized');
+    // Method for views to subscribe to graph updates
+    public subscribeToGraphUpdates(callback: (graph: FileGraph) => void) {
+        this.graphUpdateCallbacks.add(callback);
+        // Initial callback with current graph
+        if (this.fileGraph) {
+            callback(this.fileGraph);
         }
+    }
 
+    // Method for views to unsubscribe from graph updates
+    public unsubscribeFromGraphUpdates(callback: (graph: FileGraph) => void) {
+        this.graphUpdateCallbacks.delete(callback);
+    }
+
+    public getActiveGraph(): FileGraph {
+        if (!this.fileGraph) {
+            this.updateGraph();
+        }
+        return this.fileGraph!;
+    }
+
+    // Method to wait for graph update to complete
+    private async waitForGraphUpdate(timeout = 2000): Promise<void> {
         return new Promise((resolve, reject) => {
-            let timeoutId: NodeJS.Timeout;
-            
-            // Function to clean up listeners
-            const cleanup = () => {
-                clearTimeout(timeoutId);
-                fileBrowserView.app.workspace.off('file-menu', menuHandler);
-                fileBrowserView.app.vault.off('rename', renameHandler);
-            };
-
-            // Set timeout
-            timeoutId = setTimeout(() => {
-                cleanup();
+            const timeoutId = setTimeout(() => {
                 reject(new Error('Timeout waiting for graph update'));
             }, timeout);
 
-            // Handler for file menu events
-            const menuHandler = () => {
-                cleanup();
+            const callback = (graph: FileGraph) => {
+                clearTimeout(timeoutId);
+                this.unsubscribeFromGraphUpdates(callback);
                 resolve();
             };
 
-            // Handler for rename events
-            const renameHandler = () => {
-                cleanup();
-                resolve();
-            };
-
-            // Register event listeners
-            fileBrowserView.app.workspace.on('file-menu', menuHandler);
-            fileBrowserView.app.vault.on('rename', renameHandler);
+            this.subscribeToGraphUpdates(callback);
         });
     }
 
@@ -566,15 +574,6 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         } catch (error) {
             console.error('Error creating follow up note:', error);
             new Notice(`Error creating follow up note: ${error.message}`);
-        }
-    }
-
-    private ensureGraphInitialized() {
-        if (!this.fileGraph) {
-            const files = this.app.vault.getFiles();
-            const folders = this.app.vault.getAllLoadedFiles().filter(f => f instanceof TFolder) as TFolder[];
-            const items = [...files, ...folders];
-            this.fileGraph = buildFileGraph(items, this.app);
         }
     }
 

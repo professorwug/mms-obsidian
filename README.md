@@ -92,3 +92,82 @@ If you have multiple URLs, you can also do:
 ## API Documentation
 
 See https://github.com/obsidianmd/obsidian-api
+
+## File Graph Architecture
+
+The plugin maintains a centralized file graph that represents all files and folders in the vault, along with their relationships. This graph is used for features like file browsing, folgezettel navigation, and file operations.
+
+### Graph Structure
+
+The file graph consists of:
+- **Nodes**: Represent files and folders, storing metadata like:
+  - Path
+  - Display name
+  - Folgezettel ID (if present)
+  - Node type (mapping, planning)
+  - File extensions
+  - Directory status
+  - Surrogate status (for placeholder nodes)
+- **Edges**: Represent parent-child relationships between nodes
+
+### Graph Management
+
+The graph is managed centrally by the MMSPlugin class to ensure consistency and prevent unnecessary rebuilds:
+
+```typescript
+// Access the graph from a command or view
+const graph = plugin.getActiveGraph();
+
+// Subscribe to graph updates
+plugin.subscribeToGraphUpdates((newGraph) => {
+    // Handle graph update
+});
+```
+
+The graph is automatically refreshed when:
+- Files are created, deleted, or renamed
+- Folders are created, deleted, or renamed
+- The plugin is loaded
+
+Graph updates are debounced (100ms) to prevent rapid rebuilds during batch operations.
+
+### Best Practices
+
+When implementing commands or views that need graph access:
+
+1. **Accessing the Graph**:
+   ```typescript
+   // Get the current graph
+   const graph = plugin.getActiveGraph();
+   
+   // Wait for graph update after file operations
+   await plugin.waitForGraphUpdate();
+   ```
+
+2. **Subscribing to Updates**:
+   ```typescript
+   // Subscribe in onload() or onOpen()
+   plugin.subscribeToGraphUpdates((graph) => {
+       // Update your view/state
+   });
+   
+   // Unsubscribe in onunload() or onClose()
+   plugin.unsubscribeFromGraphUpdates(callback);
+   ```
+
+3. **File Operations**:
+   - After modifying files, wait for the graph to update before accessing it
+   - Use `waitForGraphUpdate()` to ensure the graph reflects recent changes
+
+4. **Performance**:
+   - Don't rebuild the graph manually; use the central instance
+   - Cache graph data in views instead of rebuilding
+   - Subscribe to updates instead of polling
+
+### Ignore Patterns
+
+The graph builder supports ignore patterns to exclude certain files and folders:
+- Patterns are configured in plugin settings
+- Uses minimatch syntax (like .gitignore)
+- Common patterns: `.*`, `__pycache__`, `.git`, etc.
+- Patterns are applied to full file paths
