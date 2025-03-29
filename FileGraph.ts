@@ -17,67 +17,136 @@ export interface FileGraph {
     edges: Map<string, Set<string>>; // parent path -> set of child paths
 }
 
+/**
+ * Validates if a string represents a valid Folgezettel ID with alternating number/letter pattern
+ * Valid formats:
+ * - Level 1: exactly 2 digits (e.g., "01", "42")
+ * - Level 2: parent ID + one letter (e.g., "01a", "42b")
+ * - Level 3: parent ID + two digits (e.g., "01a01", "42b03")
+ * - Level 4: parent ID + one letter (e.g., "01a01a", "42b03z")
+ * - Level 5: parent ID + two digits (e.g., "01a01a01", "42b03z42")
+ * - Special nodes: any valid ID + special character at the end (e.g., "01a#", "01a01&")
+ * 
+ * @param nodeId The ID to validate
+ * @returns true if the ID is valid, false otherwise
+ */
 export function isValidNodeId(nodeId: string): boolean {
+    // Check for minimum length
     if (nodeId.length < 2) return false;
-
-    // Root level must be exactly 2 digits
-    if (nodeId.length === 2) {
-        return /^\d{2}$/.test(nodeId);
+    
+    // Handle special characters at the end (mapping, planning, etc.)
+    let idToCheck = nodeId;
+    const specialChars = "#&!@$%^*_-";
+    if (specialChars.includes(nodeId[nodeId.length - 1])) {
+        // Remove the special character for validation
+        idToCheck = nodeId.slice(0, -1);
+        
+        // If removing the special character makes it too short, it's invalid
+        if (idToCheck.length < 2) return false;
     }
-
+    
+    // First level: exactly 2 digits
+    if (idToCheck.length === 2) {
+        return /^\d{2}$/.test(idToCheck);
+    }
+    
     // First two characters must be digits
-    if (!/^\d{2}/.test(nodeId)) return false;
-
+    if (!/^\d{2}$/.test(idToCheck.substring(0, 2))) return false;
+    
+    // Process the ID starting after the first two digits
     let pos = 2;
-    while (pos < nodeId.length) {
-        // Must have non-digit character
-        if (pos >= nodeId.length || /\d/.test(nodeId[pos])) {
-            return false;
-        }
-        pos++;
-
-        // Must follow letter with two digits if more than one character remains
-        if (!nodeId[pos - 1].match(/\d/)) {
-            if (pos <= nodeId.length - 2) {
-                if (!/\d/.test(nodeId[pos]) && !/\d/.test(nodeId[pos + 1])) {
-                    return false;
-                }
-                pos += 2;
-            } else if (pos === nodeId.length - 1) {
-                // If there's only one character remaining after a nondigit, it must be a special character
-                if (!"!@#$%^&*_".includes(nodeId[pos])) return false;
+    let expectLetter = true; // Track whether we expect a letter or digits
+    
+    while (pos < idToCheck.length) {
+        if (expectLetter) {
+            // We expect a letter at this position
+            if (!/^[a-zA-Z]$/.test(idToCheck[pos])) {
+                return false;
             }
-        }
-
-        // Special character at the very end
-        if (pos === nodeId.length - 1 && "!@#$%^&*_".includes(nodeId[pos])) {
             pos++;
+            expectLetter = false; // Next we expect digits
+        } else {
+            // We expect two digits at this position
+            // If there's less than 2 characters left, check that they're all digits
+            if (pos + 1 >= idToCheck.length) {
+                // Check the remaining 1 character is a digit
+                return /^\d+$/.test(idToCheck.substring(pos));
+            }
+            
+            // Check that the next two characters are digits
+            if (!/^\d{2}$/.test(idToCheck.substring(pos, pos + 2))) {
+                return false;
+            }
+            pos += 2;
+            expectLetter = true; // Next we expect a letter
         }
     }
-
+    
+    // If we've processed the entire ID, it's valid
     return true;
 }
 
+/**
+ * Determines the parent ID for a given Folgezettel ID based on alternating pattern
+ * Examples:
+ * - "01" -> null (root IDs have no parent)
+ * - "01a" -> "01" (level 2 nodes point to their root level parent)
+ * - "01a01" -> "01a" (level 3 nodes point to their level 2 parent)
+ * - "01a01b" -> "01a01" (level 4 nodes point to their level 3 parent)
+ * - "01a01b01" -> "01a01b" (level 5 nodes point to their level 4 parent)
+ * - "01a#" -> "01a" (special nodes without the special character)
+ * 
+ * @param nodeId The ID to find the parent for
+ * @returns The parent ID, or null if the ID is invalid or has no parent
+ */
 export function getParentId(nodeId: string): string | null {
     if (!isValidNodeId(nodeId)) return null;
 
+    // Check for special character at the end (mapping, planning, etc.)
+    const specialChars = "#&!@$%^*_-";
+    if (specialChars.includes(nodeId[nodeId.length - 1])) {
+        // For special nodes, the parent is the ID without the special character
+        return nodeId.substring(0, nodeId.length - 1);
+    }
+    
     // Root nodes have no parent
     if (nodeId.length <= 2) {
         return null;
     }
-    // First level nodes (parent is first 2 digits)
-    else if (nodeId.length === 3) {
-        return nodeId.substring(0, 2);
+    
+    // For the alternating pattern, we need to look at the length to determine the parent
+    const idLen = nodeId.length;
+    
+    // Calculate the parent ID based on the pattern:
+    // If ending with a letter (even positions after pos 2): remove the last letter
+    // If ending with 2 digits (3 or more characters after pos 2): remove the last 2 digits
+    
+    // Check if the ID ends with a letter
+    if (/[a-zA-Z]$/.test(nodeId)) {
+        // Remove the last letter
+        return nodeId.substring(0, idLen - 1);
     }
-    // Second level and beyond
-    else {
-        // If last character is non-numeric, remove just that character
-        if (!/\d/.test(nodeId[nodeId.length - 1])) {
-            return nodeId.substring(0, nodeId.length - 1);
+    
+    // Check if the ID ends with 2 digits (should be the case for all valid IDs at this point)
+    if (idLen >= 4 && /\d{2}$/.test(nodeId.substring(idLen - 2))) {
+        // Remove the last 2 digits
+        return nodeId.substring(0, idLen - 2);
+    }
+    
+    // For IDs with a single digit at the end (shouldn't happen with valid IDs, but handle anyway)
+    if (/\d$/.test(nodeId)) {
+        // Try to find the position where the number section starts
+        let pos = idLen - 1;
+        while (pos > 2 && /\d$/.test(nodeId[pos])) {
+            pos--;
         }
-        // Otherwise remove last two digits
-        return nodeId.substring(0, nodeId.length - 2);
+        // Return everything up to the position where digits start
+        return nodeId.substring(0, pos + 1);
     }
+    
+    // If we can't determine the parent pattern (shouldn't happen with valid IDs)
+    // Default to returning the root level (first 2 digits)
+    return nodeId.substring(0, 2);
 }
 
 function findExistingNode(name: string, id: string | undefined, graph: FileGraph): GraphNode | undefined {
@@ -86,45 +155,72 @@ function findExistingNode(name: string, id: string | undefined, graph: FileGraph
     );
 }
 
+/**
+ * Adds parent-child edges to the graph based on Folgezettel IDs and/or folder structure
+ * 
+ * @param node The node to add edges for
+ * @param graph The file graph
+ * @param originalParentPath The physical parent folder path (optional)
+ * @param processedIds Set of IDs already processed (to prevent recursion loops)
+ */
 function addParentEdgesToGraph(
     node: GraphNode, 
     graph: FileGraph, 
-    originalParentPath?: string // Optional: physical parent folder path
+    originalParentPath?: string, // Optional: physical parent folder path
+    processedIds: Set<string> = new Set() // Track processed IDs to prevent recursion loops
 ): void {
     let addedEdge = false;
+
+    // Skip if we've already processed this ID (prevent infinite recursion)
+    if (node.id && processedIds.has(node.id)) {
+        return;
+    }
+    
+    // Mark this ID as processed if it exists
+    if (node.id) {
+        processedIds.add(node.id);
+    }
 
     if (node.id) {
         const parentId = getParentId(node.id);
         if (parentId) {
             // First check if the physical parent folder has this ID
             const parentFolder = originalParentPath ? graph.nodes.get(originalParentPath) : null;
+            
+            // Find parent node - first check if physical parent folder matches, then search all nodes
             let parentNode = parentFolder?.id === parentId ? parentFolder : 
                 Array.from(graph.nodes.values()).find(n => n.id === parentId);
 
             if (!parentNode) {
-                // Create surrogate node only if we couldn't find a matching folder
-                const surrogatePath = `__surrogate_${parentId}`;
-                parentNode = {
-                    path: surrogatePath,
-                    name: `[${parentId}]`,
-                    id: parentId,
-                    isDirectory: false,
-                    isSurrogate: true,
-                    extensions: new Set(),
-                    paths: new Set([surrogatePath])
-                };
-                graph.nodes.set(surrogatePath, parentNode);
-                
-                // Recursively process the surrogate node
-                addParentEdgesToGraph(parentNode, graph);
+                // Make sure the parent ID is valid before creating a surrogate
+                if (isValidNodeId(parentId)) {
+                    // Create surrogate node only if we couldn't find a matching folder
+                    const surrogatePath = `__surrogate_${parentId}`;
+                    parentNode = {
+                        path: surrogatePath,
+                        name: `[${parentId}]`,
+                        id: parentId,
+                        isDirectory: false,
+                        isSurrogate: true,
+                        extensions: new Set(),
+                        paths: new Set([surrogatePath])
+                    };
+                    graph.nodes.set(surrogatePath, parentNode);
+                    
+                    // Recursively process the surrogate node with the tracking set
+                    addParentEdgesToGraph(parentNode, graph, undefined, processedIds);
+                }
             }
 
-            // Add edge from parent to this node
-            if (!graph.edges.has(parentNode.path)) {
-                graph.edges.set(parentNode.path, new Set());
+            // Only add the edge if we have a valid parent node
+            if (parentNode) {
+                // Add edge from parent to this node
+                if (!graph.edges.has(parentNode.path)) {
+                    graph.edges.set(parentNode.path, new Set());
+                }
+                graph.edges.get(parentNode.path)!.add(node.path);
+                addedEdge = true;
             }
-            graph.edges.get(parentNode.path)!.add(node.path);
-            addedEdge = true;
         }
     }
 

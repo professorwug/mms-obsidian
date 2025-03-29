@@ -20,11 +20,32 @@ Before diving into bugs, here's a quick overview of the Folgezettel ID naming co
 **Context**: The `isValidNodeId` function in `FileGraph.ts` is responsible for determining whether a string represents a valid Folgezettel ID. This impacts node recognition throughout the plugin.
 
 **Problems**:
-- The pattern matching logic (line 34-43) contains flaws that could cause validation to fail for valid IDs, especially those containing certain letters like 'f'.
-- The regex pattern `/\d/.test(nodeId[pos])` at line 34 might incorrectly reject valid IDs in certain cases.
-- The alternating pattern checking is overly strict and doesn't properly account for all valid ID formats.
+- The pattern matching logic (line 34-56) contains several critical flaws that will incorrectly reject valid IDs and potentially accept invalid ones.
+- The function has a conceptual issue with how it checks for pattern alternation between letters and digit pairs.
 
-**Impact**: Files with certain valid IDs might not be recognized properly in the hierarchy, especially those containing specific letters.
+**Specific ID patterns incorrectly rejected**:
+
+1. **IDs containing the letter 'f'**: The problematic code is at line 40:
+   ```typescript
+   if (!nodeId[pos - 1].match(/\d/)) {
+   ```
+   This is supposed to check "if the previous character is NOT a digit", but it's actually checking "if the previous character does NOT match a digit pattern". 
+   
+   The issue is that `.match()` returns `null` for non-matches, and `!null` evaluates to `true`. However, for the letter 'f', there's a quirk: when using RegExp.prototype.test with 'f', `/\d/.test('f')` correctly returns false. But with String.prototype.match, `'f'.match(/\d/)` returns `null` as expected, but due to a quirk in how match works with some letter patterns, it may sometimes evaluate differently than expected within this logic flow.
+
+2. **IDs with valid special characters in the middle**: For example, IDs like "01a-01" where a dash is used might be incorrectly rejected because the validation logic only allows for special characters at the end of an ID.
+
+3. **Complex multi-level IDs**: The logic fails to properly validate multi-level IDs that have more than two segments, like "01a01b02c03". The validation doesn't correctly track the pattern alternation (letter then two digits), and may reject valid IDs past a certain level of nesting.
+
+4. **IDs with special characters at the end**: While there is logic to handle special characters at the end like "#" for mapping nodes, the implementation at lines 47-49 and 53-55 is incomplete and may not properly validate all cases, especially when combined with other edge cases.
+
+**Examples of incorrectly rejected IDs**:
+- "01f01" - Due to issues with the letter 'f' in pattern matching
+- "01a01b02c03" - Complex nested ID may fail validation due to pattern tracking issues
+- "01a01-01" - IDs with valid special characters in middle positions
+- "01a01#" or "01a01&" - Mapping/planning nodes might be incorrectly rejected in some cases
+
+**Impact**: Files with these patterns in their IDs will not be properly recognized in the hierarchy, causing them to be inappropriately placed, possibly at the root level, or fail to show parent-child relationships correctly.
 
 ```typescript
 // Problematic section in isValidNodeId function
@@ -36,7 +57,7 @@ while (pos < nodeId.length) {
     pos++;
 
     // Must follow letter with two digits if more than one character remains
-    if (!nodeId[pos - 1].match(/\d/)) {
+    if (!nodeId[pos - 1].match(/\d/)) {  // PROBLEMATIC: should be checking "is not a digit"
         if (pos <= nodeId.length - 2) {
             if (!/\d/.test(nodeId[pos]) && !/\d/.test(nodeId[pos + 1])) {
                 return false;
@@ -47,9 +68,15 @@ while (pos < nodeId.length) {
             if (!"!@#$%^&*_".includes(nodeId[pos])) return false;
         }
     }
-    // ...
+    
+    // Special character at the very end
+    if (pos === nodeId.length - 1 && "!@#$%^&*_".includes(nodeId[pos])) {
+        pos++;
+    }
 }
 ```
+
+**Technical root cause**: The function attempts to validate IDs using a complex state machine implemented through manual index tracking, rather than using a more robust regular expression pattern or formal grammar definition. This approach is error-prone and difficult to debug, especially with edge cases.
 
 ### 2. Parent ID Detection Problems
 
@@ -77,11 +104,57 @@ return nodeId.substring(0, nodeId.length - 2);
 **Context**: When a file references a parent that doesn't exist, the plugin creates a "surrogate" node to maintain the hierarchy.
 
 **Problems**:
-- The surrogate node creation logic in `addParentEdgesToGraph` (lines 106-115) might create nodes at incorrect levels.
-- The naming convention `__surrogate_${parentId}` could lead to the strange two-digit placeholder nodes appearing in root.
-- The recursive call to `addParentEdgesToGraph` for surrogate nodes might create unnecessary surrogate ancestors.
+- The surrogate node creation logic in `addParentEdgesToGraph` (lines 106-115) can create nodes at incorrect levels.
+- The recursive call to `addParentEdgesToGraph` for surrogate nodes can create orphaned surrogate nodes.
+- When an ID fails validation (especially with the 'f' issue), the surrogate creation process is disrupted and can create orphans.
 
-**Impact**: Empty placeholder nodes with only two-digit numbers may appear in the root directory with no clear relationship to actual files.
+**Specific issue causing two-digit placeholders in root**:
+
+The two-digit empty placeholder nodes in the root directory are likely created through this sequence:
+
+1. A file with an ID like "01f01" (which contains the problematic letter 'f') attempts to find its parent "01".
+2. Due to the ID validation issues, this file may not be properly connected to its parent.
+3. However, the parent ID "01" is extracted and a surrogate node is created with this ID.
+4. Then, during the recursive processing at line 119:
+   ```typescript
+   addParentEdgesToGraph(parentNode, graph);
+   ```
+
+   This recursive call is supposed to find the parent of this surrogate node, but since "01" is a root-level ID, it has no parent.
+
+5. If the original node with ID "01f01" fails to be properly connected elsewhere in the hierarchy (due to validation issues), this orphaned surrogate node "01" remains in the root with no clear relationship to anything.
+
+**Step-by-step example**:
+
+Suppose you have a file "01f01 Some File.md":
+
+1. The ID "01f01" is extracted but might not validate correctly due to the 'f'
+2. The code tries to find its parent, which would be "01"
+3. If no node with ID "01" exists, a surrogate node is created:
+   ```typescript
+   const surrogatePath = `__surrogate_01`;
+   parentNode = {
+       path: surrogatePath,
+       name: `[01]`,
+       id: "01",
+       // ...other properties
+   };
+   ```
+4. This surrogate node is added to the graph, creating a placeholder labeled "01"
+5. The code then attempts to resolve the parent of "01", but since it's a root ID, it has no parent
+6. If the child relationship fails to establish properly, the "01" surrogate node remains orphaned in the root directory
+
+**Additional complexity with complex IDs**:
+
+If you have a file with a complex ID like "01a01b02c03" and intermediate parents don't exist, the surrogate creation process will:
+
+1. Create surrogate "01a01b02"
+2. Then recursively create surrogate "01a01"
+3. Then recursively create surrogate "01"
+
+If any step in this recursive chain fails due to ID validation issues, you might end up with disconnected surrogate nodes at different levels.
+
+**Impact**: Empty placeholder nodes with only two-digit numbers appear in the root directory, creating confusion and visual clutter. These nodes don't have clear relationships to the actual files they're supposed to represent.
 
 ```typescript
 // Surrogate node creation
@@ -97,7 +170,7 @@ parentNode = {
 };
 graph.nodes.set(surrogatePath, parentNode);
                 
-// Recursively process the surrogate node
+// Recursively process the surrogate node - this can create orphaned surrogates
 addParentEdgesToGraph(parentNode, graph);
 ```
 

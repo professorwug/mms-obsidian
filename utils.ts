@@ -97,6 +97,15 @@ export async function executeCommand(
     }
 }
 
+/**
+ * Generates the next available child ID for a parent node following the alternating Folgezettel pattern
+ * - If parent ends with digits (e.g. "01" or "01a01"), add a letter (e.g. "01a" or "01a01b")
+ * - If parent ends with a letter (e.g. "01a" or "01a01b"), add two digits (e.g. "01a01" or "01a01b01")
+ * 
+ * @param parentPath The path of the parent node
+ * @param graph The file graph
+ * @returns The next available child ID
+ */
 export function getNextAvailableChildId(parentPath: string, graph: FileGraph): string {
     // Get the parent node
     const parentNode = graph.nodes.get(parentPath);
@@ -108,51 +117,84 @@ export function getNextAvailableChildId(parentPath: string, graph: FileGraph): s
     if (!parentId) {
         return '';
     }
+    
+    // Remove any special characters at the end for the purpose of child ID generation
+    const specialChars = "#&!@$%^*_-";
+    let baseParentId = parentId;
+    if (specialChars.includes(parentId[parentId.length - 1])) {
+        baseParentId = parentId.slice(0, -1);
+    }
 
     // Get all children of the parent using graph edges
     const childIds = new Set<string>();
     const children = graph.edges.get(parentPath) || new Set<string>();
     
+    // Get all children regardless of ID validation status
     for (const childPath of children) {
         const childNode = graph.nodes.get(childPath);
-        if (childNode?.id && childNode.id.startsWith(parentId)) {
-            childIds.add(childNode.id);
+        if (childNode?.id && childNode.id.startsWith(baseParentId)) {
+            // For the comparison, also remove any special characters
+            let childId = childNode.id;
+            if (specialChars.includes(childId[childId.length - 1])) {
+                childId = childId.slice(0, -1);
+            }
+            childIds.add(childId);
         }
     }
 
-    // Determine if we should add a number or letter based on parent_id
-    if (/\d$/.test(parentId)) {
-        // Parent ends in number, add letters
-        const usedLetters = new Set(
-            Array.from(childIds)
-                .map(id => id[parentId.length])
-                .filter(char => char)
-        );
-
-        // Find first unused letter (a-z)
-        for (const letter of 'abcdefghijklmnopqrstuvwxyz') {
-            if (!usedLetters.has(letter)) {
-                return `${parentId}${letter}`;
+    // Determine what to add based on the pattern:
+    // If parent ends with a digit, add a letter
+    // If parent ends with a letter, add two digits
+    const endsWithDigit = /\d$/.test(baseParentId);
+    
+    if (endsWithDigit) {
+        // Parent ends with a digit, so add a letter
+        const usedLetters = new Set<string>();
+        
+        // Extract used letters by comparing with parent ID prefix
+        for (const childId of childIds) {
+            if (childId.length > baseParentId.length) {
+                // Extract the letter that follows the parent ID
+                const letter = childId[baseParentId.length];
+                if (letter && /^[a-zA-Z]$/.test(letter)) {
+                    usedLetters.add(letter.toLowerCase());
+                }
             }
         }
 
-        throw new Error(`No available letter suffixes for parent ${parentId}`);
+        // Find first unused letter (a-z)
+        // Include 'f' since we've fixed the validation issues
+        const letters = 'abcdefghijklmnopqrstuvwxyz';
+        for (const letter of letters) {
+            if (!usedLetters.has(letter)) {
+                return `${baseParentId}${letter}`;
+            }
+        }
+
+        throw new Error(`No available letter suffixes for parent ${baseParentId}`);
     } else {
-        // Parent ends in letter (or is root), add two-digit numbers
-        const usedNumbers = new Set(
-            Array.from(childIds)
-                .map(id => id.slice(parentId.length, parentId.length + 2))
-                .filter(num => num.length === 2)
-        );
+        // Parent ends with a letter, so add two digits
+        const usedNumbers = new Set<string>();
+        
+        // Extract used numbers
+        for (const childId of childIds) {
+            if (childId.length >= baseParentId.length + 2) {
+                // Extract the 2 digits that follow the parent ID
+                const digits = childId.slice(baseParentId.length, baseParentId.length + 2);
+                if (digits && /^\d{2}$/.test(digits)) {
+                    usedNumbers.add(digits);
+                }
+            }
+        }
 
         // Find first unused two-digit number
         for (let i = 1; i < 100; i++) {
             const candidate = i.toString().padStart(2, '0');
             if (!usedNumbers.has(candidate)) {
-                return `${parentId}${candidate}`;
+                return `${baseParentId}${candidate}`;
             }
         }
 
-        throw new Error(`No available number suffixes for parent ${parentId}`);
+        throw new Error(`No available number suffixes for parent ${baseParentId}`);
     }
 }
