@@ -74,7 +74,10 @@ const FileItem: React.FC<FileItemProps> = ({
     const expanded = expandedPaths.has(path);
     
     // We don't need this effect anymore since we're controlling extension visibility at the parent level
-    const displayName = node.id ? `${node.id} ${node.name}` : node.name;
+    // Ensure displayName is never empty by providing a fallback
+    const displayName = node.id ? 
+        `${node.id}${node.name ? ' ' + node.name : ''}` : 
+        (node.name || `[${path.split('/').pop() || 'Unnamed'}]`);
     const isSelected = selectedPath === path;
     const isMultiSelected = selectedPaths.has(path);
 
@@ -89,261 +92,432 @@ const FileItem: React.FC<FileItemProps> = ({
     });
 
     const handleClick = async (e: React.MouseEvent) => {
-        console.log('Main item clicked:', path);
-        e.stopPropagation();
-        onSelect(path, e.ctrlKey || e.metaKey);
-        
-        const node = graph.nodes.get(path);
-        if (!node) return;
+        try {
+            console.log('Main item clicked:', path);
+            console.log('Node details:', JSON.stringify({
+                path,
+                node: graph.nodes.get(path),
+                hasChildren,
+                children
+            }, (key, value) => {
+                if (value instanceof Set) {
+                    return Array.from(value);
+                }
+                if (key === 'paths' || key === 'extensions') {
+                    return Array.from(value || []);
+                }
+                return value;
+            }, 2));
+            
+            e.stopPropagation();
+            onSelect(path, e.ctrlKey || e.metaKey);
+            
+            const node = graph.nodes.get(path);
+            if (!node) {
+                console.error('Node not found in graph for path:', path);
+                new Notice('Error: Node not found in graph');
+                return;
+            }
         
         // On mobile, toggle the active extensions path (only one can be active at a time)
         if (isMobileApp()) {
             // If this node has children, toggle expansion
             if (hasChildren) {
                 console.log('Node has children, toggling expansion');
-                onToggle(path);
+                try {
+                    onToggle(path);
+                } catch (error) {
+                    console.error('Error toggling expansion:', error);
+                    new Notice('Error toggling expansion');
+                }
             }
             
             // Set this as the active extensions path, without toggling
-            if (node.extensions.size > 0) {
-                setActiveExtensionsPath(path);
+            if (node.extensions && node.extensions.size > 0) {
+                try {
+                    setActiveExtensionsPath(path);
+                } catch (error) {
+                    console.error('Error setting active extensions path:', error);
+                }
             }
         }
         // On desktop, just toggle expansion if there are children
         else if (hasChildren) {
             console.log('Node has children, toggling expansion');
-            onToggle(path);
+            try {
+                onToggle(path);
+            } catch (error) {
+                console.error('Error toggling expansion:', error);
+                new Notice('Error toggling expansion');
+            }
         } 
         // If the node has no children and is not a directory, open it on single click
         else if (!node.isDirectory && !node.isSurrogate) {
             console.log('Node has no children, opening file on single click');
             // For files with multiple extensions, prefer .md, otherwise use the first path
-            if (node.extensions.size > 0) {
-                const mdPath = Array.from(node.paths).find(p => p.toLowerCase().endsWith('.md'));
-                console.log('Looking for preferred .md file:', mdPath);
-                
-                if (mdPath) {
-                    onFileClick(mdPath);
-                } else {
-                    const firstPath = Array.from(node.paths)[0];
-                    console.log('No .md file found, using first path:', firstPath);
-                    onFileClick(firstPath);
+            if (node.extensions && node.extensions.size > 0 && node.paths && node.paths.size > 0) {
+                try {
+                    const mdPath = Array.from(node.paths).find(p => p && typeof p === 'string' && p.toLowerCase().endsWith('.md'));
+                    console.log('Looking for preferred .md file:', mdPath);
+                    
+                    if (mdPath) {
+                        onFileClick(mdPath);
+                    } else {
+                        const firstPath = Array.from(node.paths)[0];
+                        if (firstPath) {
+                            console.log('No .md file found, using first path:', firstPath);
+                            onFileClick(firstPath);
+                        } else {
+                            console.error('No valid path found for node:', path);
+                            new Notice('Error: Cannot find a valid file to open');
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error opening file:', error);
+                    new Notice('Error opening file: ' + (error.message || 'Unknown error'));
                 }
+            } else {
+                console.error('Node has no extensions or paths:', node);
+                new Notice('Error: The file has no valid paths');
             }
         }
         
         // For surrogate nodes, create a new markdown file
-        if (node.isSurrogate && node.id) {
-            console.log('Creating new file for surrogate node:', node.id);
-            console.log('Node path:', path);
-
-            // Store the expansion state of the surrogate node before creating the placeholder
-            const wasExpanded = expandedPaths.has(path);
-
-            // Recursively find first non-surrogate child
-            const findNonSurrogateChild = (nodePath: string, visited: Set<string> = new Set()): string | null => {
-                if (visited.has(nodePath)) return null; // Prevent infinite loops
-                visited.add(nodePath);
-
-                const childPaths = Array.from(graph.edges.get(nodePath) || []);
-                console.log('Checking children of:', nodePath, childPaths);
-
-                for (const childPath of childPaths) {
-                    const childNode = graph.nodes.get(childPath);
-                    if (!childNode) continue;
-
-                    if (!childNode.isSurrogate) {
-                        // Found a non-surrogate node, use its path
-                        const actualPath = Array.from(childNode.paths)[0];
-                        console.log('Found non-surrogate child:', actualPath);
-                        return actualPath;
-                    } else {
-                        // Recursively check this surrogate's children
-                        const result = findNonSurrogateChild(childPath, visited);
-                        if (result) return result;
-                    }
-                }
-                return null;
-            };
-
-            const actualChildPath = findNonSurrogateChild(path);
-            if (!actualChildPath) {
-                console.error('Could not find any non-surrogate children');
-                new Notice('Cannot create file: no non-surrogate children found');
-                return;
-            }
-
-            const targetDir = actualChildPath.split('/').slice(0, -1).join('/');
-            console.log('Using directory from non-surrogate child:', targetDir);
-
-            const newFilePath = targetDir ? `${targetDir}/${node.id} Placeholder.md` : `${node.id} Placeholder.md`;
-            console.log('Creating file at:', newFilePath);
-            
+        if (node.isSurrogate && node.id && node.id.trim() !== '') {
             try {
-                await plugin.app.vault.create(newFilePath, '');
-                console.log('Created new file:', newFilePath);
+                console.log('Creating new file for surrogate node:', node.id);
+                console.log('Node path:', path);
 
-                // If the surrogate was expanded, expand the new placeholder file
-                // We need to wait a moment for the file system event to trigger and the graph to update
-                if (wasExpanded) {
-                    setTimeout(() => {
-                        const newExpandedPaths = new Set(expandedPaths);
-                        // Remove the surrogate path
-                        newExpandedPaths.delete(path);
-                        // Add the new placeholder path
-                        newExpandedPaths.add(newFilePath);
-                        onToggle(newFilePath); // Use onToggle instead of setExpandedPaths
-                    }, 100);
+                // Store the expansion state of the surrogate node before creating the placeholder
+                const wasExpanded = expandedPaths.has(path);
+
+                // Recursively find first non-surrogate child
+                const findNonSurrogateChild = (nodePath: string, visited: Set<string> = new Set()): string | null => {
+                    if (!nodePath || visited.has(nodePath)) return null; // Prevent infinite loops
+                    visited.add(nodePath);
+
+                    const childPaths = Array.from(graph.edges.get(nodePath) || []);
+                    console.log('Checking children of:', nodePath, childPaths);
+
+                    for (const childPath of childPaths) {
+                        if (!childPath) continue;
+                        const childNode = graph.nodes.get(childPath);
+                        if (!childNode) continue;
+
+                        if (!childNode.isSurrogate) {
+                            // Found a non-surrogate node, use its path
+                            const nodePaths = Array.from(childNode.paths || []);
+                            if (nodePaths.length === 0) continue;
+                            
+                            const actualPath = nodePaths[0];
+                            if (!actualPath) continue;
+                            
+                            console.log('Found non-surrogate child:', actualPath);
+                            return actualPath;
+                        } else {
+                            // Recursively check this surrogate's children
+                            const result = findNonSurrogateChild(childPath, visited);
+                            if (result) return result;
+                        }
+                    }
+                    return null;
+                };
+
+                const actualChildPath = findNonSurrogateChild(path);
+                if (!actualChildPath) {
+                    console.error('Could not find any non-surrogate children');
+                    new Notice('Cannot create file: no non-surrogate children found');
+                    return;
                 }
 
-                // Open the new file in a new tab
-                const file = plugin.app.vault.getAbstractFileByPath(newFilePath);
-                if (file instanceof TFile) {
-                    await plugin.app.workspace.getLeaf('tab').openFile(file);
+                const pathParts = actualChildPath.split('/');
+                const targetDir = pathParts.length > 1 ? pathParts.slice(0, -1).join('/') : '';
+                console.log('Using directory from non-surrogate child:', targetDir);
+
+                const newFilePath = targetDir ? `${targetDir}/${node.id} Placeholder.md` : `${node.id} Placeholder.md`;
+                console.log('Creating file at:', newFilePath);
+                
+                try {
+                    await plugin.app.vault.create(newFilePath, '');
+                    console.log('Created new file:', newFilePath);
+
+                    // If the surrogate was expanded, expand the new placeholder file
+                    // We need to wait a moment for the file system event to trigger and the graph to update
+                    if (wasExpanded) {
+                        setTimeout(() => {
+                            try {
+                                const newExpandedPaths = new Set(expandedPaths);
+                                // Remove the surrogate path
+                                newExpandedPaths.delete(path);
+                                // Add the new placeholder path
+                                newExpandedPaths.add(newFilePath);
+                                onToggle(newFilePath); // Use onToggle instead of setExpandedPaths
+                            } catch (error) {
+                                console.error('Error updating expanded paths:', error);
+                            }
+                        }, 100);
+                    }
+
+                    // Open the new file in a new tab
+                    const file = plugin.app.vault.getAbstractFileByPath(newFilePath);
+                    if (file instanceof TFile) {
+                        await plugin.app.workspace.getLeaf('tab').openFile(file);
+                    }
+                } catch (error) {
+                    console.error('Error creating file:', error);
+                    new Notice(`Error creating file: ${error.message}`);
                 }
             } catch (error) {
-                console.error('Error creating file:', error);
-                new Notice(`Error creating file: ${error.message}`);
+                console.error('Error handling surrogate node:', error);
+                new Notice(`Error handling surrogate node: ${error.message || 'Unknown error'}`);
             }
             return;
+        }
+        } catch (error) {
+            console.error('Unhandled error in click handler:', error);
+            new Notice(`Error handling click: ${error.message || 'Unknown error'}`);
         }
     };
     
     // Add double click handler to open files
     const handleDoubleClick = async (e: React.MouseEvent) => {
-        console.log('Node double-clicked:', path);
-        e.stopPropagation();
-        
-        const node = graph.nodes.get(path);
-        if (!node || node.isDirectory || node.isSurrogate) return;
-        
-        // For files with multiple extensions, prefer .md, otherwise use the first path
-        if (node.extensions.size > 0) {
-            const mdPath = Array.from(node.paths).find(p => p.toLowerCase().endsWith('.md'));
-            console.log('Looking for preferred .md file:', mdPath);
+        try {
+            console.log('Node double-clicked:', path);
+            e.stopPropagation();
             
-            if (mdPath) {
-                onFileClick(mdPath);
-            } else {
-                const firstPath = Array.from(node.paths)[0];
-                console.log('No .md file found, using first path:', firstPath);
-                onFileClick(firstPath);
+            const node = graph.nodes.get(path);
+            if (!node) {
+                console.error('Node not found in graph for path:', path);
+                new Notice('Error: Node not found in graph');
+                return;
             }
+            
+            if (node.isDirectory || node.isSurrogate) return;
+            
+            // For files with multiple extensions, prefer .md, otherwise use the first path
+            if (node.extensions && node.extensions.size > 0 && node.paths && node.paths.size > 0) {
+                try {
+                    const mdPath = Array.from(node.paths).find(p => p && typeof p === 'string' && p.toLowerCase().endsWith('.md'));
+                    console.log('Looking for preferred .md file:', mdPath);
+                    
+                    if (mdPath) {
+                        onFileClick(mdPath);
+                    } else {
+                        const firstPath = Array.from(node.paths)[0];
+                        if (firstPath) {
+                            console.log('No .md file found, using first path:', firstPath);
+                            onFileClick(firstPath);
+                        } else {
+                            console.error('No valid path found for node:', path);
+                            new Notice('Error: Cannot find a valid file to open');
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error opening file on double-click:', error);
+                    new Notice(`Error opening file: ${error.message || 'Unknown error'}`);
+                }
+            } else {
+                console.error('Node has no extensions or paths:', node);
+                new Notice('Error: The file has no valid paths');
+            }
+        } catch (error) {
+            console.error('Unhandled error in double-click handler:', error);
+            new Notice(`Error handling double-click: ${error.message || 'Unknown error'}`);
         }
     };
 
     const handleContextMenu = (e: React.MouseEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
+        try {
+            e.preventDefault();
+            e.stopPropagation();
 
-        const menu = new Menu();
-        const node = graph.nodes.get(path);
+            const menu = new Menu();
+            const node = graph.nodes.get(path);
 
-        if (!node) return;
-        
-        // Add a visible indicator of which item was right-clicked (especially helpful on mobile)
-        onSelect(path, false);
+            if (!node) {
+                console.error('Node not found in graph for path:', path);
+                new Notice('Error: Node not found in graph');
+                return;
+            }
+            
+            // Add a visible indicator of which item was right-clicked (especially helpful on mobile)
+            try {
+                onSelect(path, false);
+            } catch (error) {
+                console.error('Error selecting node:', error);
+            }
 
         // Add "Create Follow-up Note" option if it's a file
         if (!node.isDirectory) {
-            const file = app.vault.getAbstractFileByPath(path);
-            if (file instanceof TFile) {
-                menu.addItem((item) => {
-                    item
-                        .setTitle("Create Follow-up Note")
-                        .setIcon("file-plus")
-                        .onClick(() => {
-                            plugin.createFollowUpNote(file);
-                        });
-                });
-
-                menu.addItem((item) => {
-                    item
-                        .setTitle("Rename with Extensions")
-                        .setIcon("pencil")
-                        .onClick(() => {
-                            const modal = new RenameModal(app, file, async (newName: string) => {
-                                await plugin.renameFileWithExtensions(file, newName);
+            try {
+                const file = app.vault.getAbstractFileByPath(path);
+                if (file instanceof TFile) {
+                    menu.addItem((item) => {
+                        item
+                            .setTitle("Create Follow-up Note")
+                            .setIcon("file-plus")
+                            .onClick(() => {
+                                try {
+                                    plugin.createFollowUpNote(file);
+                                } catch (error) {
+                                    console.error('Error creating follow-up note:', error);
+                                    new Notice(`Error creating follow-up note: ${error.message || 'Unknown error'}`);
+                                }
                             });
-                            modal.open();
-                        });
-                });
+                    });
 
-                // Add Python-specific options if it's a Python file
-                if (path.endsWith('.py')) {
-                    menu.addSeparator();
+                    menu.addItem((item) => {
+                        item
+                            .setTitle("Rename with Extensions")
+                            .setIcon("pencil")
+                            .onClick(() => {
+                                try {
+                                    const modal = new RenameModal(app, file, async (newName: string) => {
+                                        try {
+                                            await plugin.renameFileWithExtensions(file, newName);
+                                        } catch (error) {
+                                            console.error('Error renaming file:', error);
+                                            new Notice(`Error renaming file: ${error.message || 'Unknown error'}`);
+                                        }
+                                    });
+                                    modal.open();
+                                } catch (error) {
+                                    console.error('Error opening rename modal:', error);
+                                    new Notice(`Error opening rename modal: ${error.message || 'Unknown error'}`);
+                                }
+                            });
+                    });
 
-                    if (plugin.settings.useMarimo) {
-                        // Add Marimo options
-                        menu.addItem((item) => {
-                            item
-                                .setTitle("Open in Marimo")
-                                .setIcon("code")
-                                .onClick(async () => {
-                                    await plugin.openMarimoNotebook(file);
-                                });
-                        });
-                    }
+                    // Add Python-specific options if it's a Python file
+                    if (path.endsWith('.py')) {
+                        menu.addSeparator();
 
-                    // Add default Python command if configured
-                    if (plugin.settings.fileTypeCommands['py']) {
-                        menu.addItem((item) => {
-                            item
-                                .setTitle("Open in Default Editor")
-                                .setIcon("edit")
-                                .onClick(async () => {
-                                    await plugin.executeDefaultPythonCommand(file);
-                                });
-                        });
-                    }
+                        if (plugin.settings.useMarimo) {
+                            // Add Marimo options
+                            menu.addItem((item) => {
+                                item
+                                    .setTitle("Open in Marimo")
+                                    .setIcon("code")
+                                    .onClick(async () => {
+                                        try {
+                                            await plugin.openMarimoNotebook(file);
+                                        } catch (error) {
+                                            console.error('Error opening Marimo notebook:', error);
+                                            new Notice(`Error opening Marimo notebook: ${error.message || 'Unknown error'}`);
+                                        }
+                                    });
+                            });
+                        }
 
-                    // Add remote notebook option if configured
-                    if (plugin.settings.marimoRemoteHost && plugin.settings.marimoRemoteUser && plugin.settings.marimoRemoteKeyPath) {
-                        menu.addItem((item) => {
-                            item
-                                .setTitle("Open as Remote Notebook")
-                                .setIcon("globe")
-                                .onClick(async () => {
-                                    await plugin.openRemoteMarimoNotebook(file, node);
-                                });
-                        });
+                        // Add default Python command if configured
+                        if (plugin.settings.fileTypeCommands['py']) {
+                            menu.addItem((item) => {
+                                item
+                                    .setTitle("Open in Default Editor")
+                                    .setIcon("edit")
+                                    .onClick(async () => {
+                                        try {
+                                            await plugin.executeDefaultPythonCommand(file);
+                                        } catch (error) {
+                                            console.error('Error executing Python command:', error);
+                                            new Notice(`Error executing Python command: ${error.message || 'Unknown error'}`);
+                                        }
+                                    });
+                            });
+                        }
+
+                        // Add remote notebook option if configured
+                        if (plugin.settings.marimoRemoteHost && plugin.settings.marimoRemoteUser && plugin.settings.marimoRemoteKeyPath) {
+                            menu.addItem((item) => {
+                                item
+                                    .setTitle("Open as Remote Notebook")
+                                    .setIcon("globe")
+                                    .onClick(async () => {
+                                        try {
+                                            await plugin.openRemoteMarimoNotebook(file, node);
+                                        } catch (error) {
+                                            console.error('Error opening remote Marimo notebook:', error);
+                                            new Notice(`Error opening remote Marimo notebook: ${error.message || 'Unknown error'}`);
+                                        }
+                                    });
+                            });
+                        }
                     }
                 }
+            } catch (error) {
+                console.error('Error setting up file menu items:', error);
             }
         }
 
         // Add folgemove option
-        menu.addSeparator();
-        menu.addItem((item) => {
-            item
-                .setTitle("Move with Children")
-                .setIcon("folder-move")
-                .onClick(() => {
-                    const file = app.vault.getAbstractFileByPath(path);
-                    if (file) {
-                        const modal = new FolgemoveModal(app);
-                        modal.open();
-                    }
-                });
-        });
+        try {
+            menu.addSeparator();
+            menu.addItem((item) => {
+                item
+                    .setTitle("Move with Children")
+                    .setIcon("folder-move")
+                    .onClick(() => {
+                        try {
+                            const file = app.vault.getAbstractFileByPath(path);
+                            if (file) {
+                                const modal = new FolgemoveModal(app);
+                                modal.open();
+                            }
+                        } catch (error) {
+                            console.error('Error with folgemove:', error);
+                            new Notice(`Error with folgemove: ${error.message || 'Unknown error'}`);
+                        }
+                    });
+            });
 
-        menu.showAtMouseEvent(e.nativeEvent);
+            menu.showAtMouseEvent(e.nativeEvent);
+        } catch (error) {
+            console.error('Error showing context menu:', error);
+            new Notice(`Error showing context menu: ${error.message || 'Unknown error'}`);
+        }
+        } catch (error) {
+            console.error('Unhandled error in context menu handler:', error);
+            new Notice(`Error handling context menu: ${error.message || 'Unknown error'}`);
+        }
     };
 
     const handleExtensionClick = (e: React.MouseEvent, ext: string) => {
-        console.log('Extension click handler start:', ext);
-        e.stopPropagation();
-        e.preventDefault();
-        
-        const node = graph.nodes.get(path);
-        if (!node) return;
+        try {
+            console.log('Extension click handler start:', ext);
+            e.stopPropagation();
+            e.preventDefault();
+            
+            const node = graph.nodes.get(path);
+            if (!node) {
+                console.error('Node not found in graph for path:', path);
+                new Notice('Error: Node not found in graph');
+                return;
+            }
 
-        console.log('Node paths:', Array.from(node.paths));
-        const extPath = Array.from(node.paths).find(p => p.toLowerCase().endsWith(`.${ext}`));
-        console.log('Found path for extension:', extPath);
-        
-        if (extPath) {
-            onFileClick(extPath);
+            if (!node.paths || node.paths.size === 0) {
+                console.error('Node has no paths:', node);
+                new Notice('Error: No file paths available');
+                return;
+            }
+
+            console.log('Node paths:', Array.from(node.paths));
+            const extPath = Array.from(node.paths).find(p => p && typeof p === 'string' && p.toLowerCase().endsWith(`.${ext}`));
+            console.log('Found path for extension:', extPath);
+            
+            if (extPath) {
+                try {
+                    onFileClick(extPath);
+                } catch (error) {
+                    console.error('Error opening file by extension:', error);
+                    new Notice(`Error opening file: ${error.message || 'Unknown error'}`);
+                }
+            } else {
+                console.error(`No file with extension .${ext} found`);
+                new Notice(`No file with extension .${ext} found`);
+            }
+        } catch (error) {
+            console.error('Unhandled error in extension click handler:', error);
+            new Notice(`Error handling extension click: ${error.message || 'Unknown error'}`);
         }
     };
 
@@ -370,7 +544,7 @@ const FileItem: React.FC<FileItemProps> = ({
                     <div className="file-name-container">
                         <span className="file-name">
                             {displayName}
-                            {hasMappingChild && <span className="node-type-indicator mapping">#</span>}
+                            {hasMappingChild && <span className="node-type-indicator mapping">*</span>}
                             {hasPlanningChild && <span className="node-type-indicator planning">&</span>}
                         </span>
                         {!node.isDirectory && node.extensions.size > 0 && (
@@ -401,14 +575,19 @@ const FileItem: React.FC<FileItemProps> = ({
             {expanded && hasChildren && (
                 <div className="file-item-children">
                     {Array.from(graph.edges.get(path) || [])
+                        .filter(childPath => childPath !== '/') // Filter out the root node
                         .sort((a, b) => {
                             const nodeA = graph.nodes.get(a);
                             const nodeB = graph.nodes.get(b);
                             if (!nodeA || !nodeB) return 0;
 
                             // Sort by full display name (ID + name)
-                            const displayNameA = nodeA.id ? `${nodeA.id} ${nodeA.name}` : nodeA.name;
-                            const displayNameB = nodeB.id ? `${nodeB.id} ${nodeB.name}` : nodeB.name;
+                            const displayNameA = nodeA.id ? 
+                                `${nodeA.id}${nodeA.name ? ' ' + nodeA.name : ''}` : 
+                                (nodeA.name || `[${a.split('/').pop() || 'Unnamed'}]`);
+                            const displayNameB = nodeB.id ? 
+                                `${nodeB.id}${nodeB.name ? ' ' + nodeB.name : ''}` : 
+                                (nodeB.name || `[${b.split('/').pop() || 'Unnamed'}]`);
                             return displayNameA.localeCompare(displayNameB);
                         })
                         .map(childPath => {
@@ -646,6 +825,9 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                 }}
             >
                 {rootChildren.map(childPath => {
+                    // Skip the root node itself
+                    if (childPath === '/') return null;
+                    
                     const childNode = graph.nodes.get(childPath);
                     if (!childNode) return null;
 

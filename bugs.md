@@ -37,13 +37,13 @@ Before diving into bugs, here's a quick overview of the Folgezettel ID naming co
 
 3. **Complex multi-level IDs**: The logic fails to properly validate multi-level IDs that have more than two segments, like "01a01b02c03". The validation doesn't correctly track the pattern alternation (letter then two digits), and may reject valid IDs past a certain level of nesting.
 
-4. **IDs with special characters at the end**: While there is logic to handle special characters at the end like "#" for mapping nodes, the implementation at lines 47-49 and 53-55 is incomplete and may not properly validate all cases, especially when combined with other edge cases.
+4. **IDs with special characters at the end**: While there is logic to handle special characters at the end like "*" for mapping nodes, the implementation at lines 47-49 and 53-55 is incomplete and may not properly validate all cases, especially when combined with other edge cases.
 
 **Examples of incorrectly rejected IDs**:
 - "01f01" - Due to issues with the letter 'f' in pattern matching
 - "01a01b02c03" - Complex nested ID may fail validation due to pattern tracking issues
 - "01a01-01" - IDs with valid special characters in middle positions
-- "01a01#" or "01a01&" - Mapping/planning nodes might be incorrectly rejected in some cases
+- "01a01*" or "01a01&" - Mapping/planning nodes might be incorrectly rejected in some cases
 
 **Impact**: Files with these patterns in their IDs will not be properly recognized in the hierarchy, causing them to be inappropriately placed, possibly at the root level, or fail to show parent-child relationships correctly.
 

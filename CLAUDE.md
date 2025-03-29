@@ -32,7 +32,7 @@ The pattern continues with **strict alternation** between adding:
 - Two digits (for odd-numbered levels)
 
 **Special Nodes**:
-- **Mapping Nodes**: IDs ending with "#" (e.g., "01a#", "01a01#")
+- **Mapping Nodes**: IDs ending with "*" (e.g., "01a*", "01a01*")
 - **Planning Nodes**: IDs ending with "&" (e.g., "42b&", "42b03&")
 
 **Finding Parent IDs**:

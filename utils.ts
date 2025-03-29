@@ -119,7 +119,7 @@ export function getNextAvailableChildId(parentPath: string, graph: FileGraph): s
     }
     
     // Remove any special characters at the end for the purpose of child ID generation
-    const specialChars = "#&!@$%^*_-";
+    const specialChars = "*&!@$%^#_-";
     let baseParentId = parentId;
     if (specialChars.includes(parentId[parentId.length - 1])) {
         baseParentId = parentId.slice(0, -1);

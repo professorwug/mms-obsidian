@@ -646,7 +646,7 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
                 }
             } else {
                 // For mapping and planning notes, use parent's ID with appropriate suffix
-                newId = result.type === 'mapping' ? `${parentNode.id}#` : `${parentNode.id}&`;
+                newId = result.type === 'mapping' ? `${parentNode.id}*` : `${parentNode.id}&`;
             }
 
             // Create the new file with appropriate extension

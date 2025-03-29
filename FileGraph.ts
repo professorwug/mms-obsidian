@@ -36,7 +36,7 @@ export function isValidNodeId(nodeId: string): boolean {
     
     // Handle special characters at the end (mapping, planning, etc.)
     let idToCheck = nodeId;
-    const specialChars = "#&!@$%^*_-";
+    const specialChars = "*&!@$%^#_-";
     if (specialChars.includes(nodeId[nodeId.length - 1])) {
         // Remove the special character for validation
         idToCheck = nodeId.slice(0, -1);
@@ -103,7 +103,7 @@ export function getParentId(nodeId: string): string | null {
     if (!isValidNodeId(nodeId)) return null;
 
     // Check for special character at the end (mapping, planning, etc.)
-    const specialChars = "#&!@$%^*_-";
+    const specialChars = "*&!@$%^#_-";
     if (specialChars.includes(nodeId[nodeId.length - 1])) {
         // For special nodes, the parent is the ID without the special character
         return nodeId.substring(0, nodeId.length - 1);
@@ -198,7 +198,7 @@ function addParentEdgesToGraph(
                     const surrogatePath = `__surrogate_${parentId}`;
                     parentNode = {
                         path: surrogatePath,
-                        name: `[${parentId}]`,
+                        name: parentId ? `[${parentId}]` : '[Unnamed Parent]', // Ensure name is never empty
                         id: parentId,
                         isDirectory: false,
                         isSurrogate: true,
@@ -298,15 +298,18 @@ export function buildFileGraph(items: Array<TFile | TFolder>, app: App): FileGra
         
         // Parse name and ID, using basename for files
         const basename = isDirectory ? item.name : (item as TFile).basename;
-        const parts = basename.split(/\s+/);
-        const firstWord = parts[0];
+        const parts = basename.split(/\s+/).filter(p => p.trim() !== ''); // Filter out empty parts
+        const firstWord = parts.length > 0 ? parts[0] : '';
         const id = parts.length > 1 && isValidNodeId(firstWord) ? firstWord : undefined;
-        const name = id ? parts.slice(1).join(' ') : basename;
+        // Ensure name is never empty
+        const name = id && parts.length > 1 ? 
+            parts.slice(1).join(' ') || `[Unnamed-${Date.now().toString().slice(-4)}]` : 
+            basename || `[Unnamed-${Date.now().toString().slice(-4)}]`;
 
         // Determine node type based on ID suffix
         let nodeType: 'mapping' | 'planning' | undefined;
         if (id) {
-            if (id.endsWith('#')) nodeType = 'mapping';
+            if (id.endsWith('*')) nodeType = 'mapping';
             else if (id.endsWith('&')) nodeType = 'planning';
         }
 
