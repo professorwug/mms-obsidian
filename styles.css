@@ -167,3 +167,11 @@ If your plugin does not need CSS, delete this file.
 .file-item-content.is-planning {
     color: var(--text-success);
 }
+
+/* Add a subtle hover effect for files with children to indicate they need to be double-clicked */
+.file-item:not(.is-folder).has-children > .file-item-content:hover .file-name {
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+}

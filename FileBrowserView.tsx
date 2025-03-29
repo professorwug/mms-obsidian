@@ -87,24 +87,33 @@ const FileItem: React.FC<FileItemProps> = ({
         const node = graph.nodes.get(path);
         if (!node) return;
 
-        // If it's a directory, only toggle expansion
-        if (node.isDirectory) {
-            console.log('Directory clicked, toggling expansion');
-            if (hasChildren) {
-                onToggle(path);
+        // Toggle expansion for both files and directories on single click if they have children
+        if (hasChildren) {
+            console.log('Node has children, toggling expansion');
+            onToggle(path);
+        } 
+        // If the node has no children and is not a directory, open it on single click
+        else if (!node.isDirectory && !node.isSurrogate) {
+            console.log('Node has no children, opening file on single click');
+            // For files with multiple extensions, prefer .md, otherwise use the first path
+            if (node.extensions.size > 0) {
+                const mdPath = Array.from(node.paths).find(p => p.toLowerCase().endsWith('.md'));
+                console.log('Looking for preferred .md file:', mdPath);
+                
+                if (mdPath) {
+                    onFileClick(mdPath);
+                } else {
+                    const firstPath = Array.from(node.paths)[0];
+                    console.log('No .md file found, using first path:', firstPath);
+                    onFileClick(firstPath);
+                }
             }
-            return;
         }
-
+        
         // For surrogate nodes, create a new markdown file
         if (node.isSurrogate && node.id) {
             console.log('Creating new file for surrogate node:', node.id);
             console.log('Node path:', path);
-            
-            // Always expand surrogate nodes when clicked
-            if (hasChildren) {
-                onToggle(path);
-            }
 
             // Store the expansion state of the surrogate node before creating the placeholder
             const wasExpanded = expandedPaths.has(path);
@@ -176,15 +185,17 @@ const FileItem: React.FC<FileItemProps> = ({
             }
             return;
         }
-
-        // For non-directory nodes:
-        // 1. If it has children, toggle expansion
-        if (hasChildren) {
-            console.log('File with children clicked, toggling expansion');
-            onToggle(path);
-        }
-
-        // 2. For files with multiple extensions, prefer .md, otherwise use the first path
+    };
+    
+    // Add double click handler to open files
+    const handleDoubleClick = async (e: React.MouseEvent) => {
+        console.log('Node double-clicked:', path);
+        e.stopPropagation();
+        
+        const node = graph.nodes.get(path);
+        if (!node || node.isDirectory || node.isSurrogate) return;
+        
+        // For files with multiple extensions, prefer .md, otherwise use the first path
         if (node.extensions.size > 0) {
             const mdPath = Array.from(node.paths).find(p => p.toLowerCase().endsWith('.md'));
             console.log('Looking for preferred .md file:', mdPath);
@@ -320,6 +331,7 @@ const FileItem: React.FC<FileItemProps> = ({
                         node.nodeType ? `is-${node.nodeType}-node` : ''
                     }`}
                     onClick={handleClick}
+                    onDoubleClick={handleDoubleClick}
                     onContextMenu={handleContextMenu}
                 >
                     {hasChildren && (
