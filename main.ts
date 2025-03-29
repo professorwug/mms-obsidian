@@ -3,7 +3,7 @@ import { FileBrowserView } from './FileBrowserView';
 import { FolgemoveModal } from './FolgemoveModal';
 import { FollowUpModal } from './FollowUpModal';
 import { RenameModal } from './RenameModal';
-import { getNextAvailableChildId } from './utils';
+import { getNextAvailableChildId, isMobileApp, executeCommand, getPlatformAppropriateFilePath } from './utils';
 import { FileGraph, buildFileGraph, GraphNode } from './FileGraph';
 
 // Remember to rename these classes and interfaces!
@@ -678,14 +678,19 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
     }
 
     async openMarimoNotebook(file: TFile): Promise<void> {
+        // Check if we're on mobile - Marimo is desktop-only
+        if (isMobileApp()) {
+            new Notice('Marimo notebooks are not supported on mobile devices');
+            return;
+        }
+        
         try {
             // Generate random port and password
             const port = generateRandomPort();
             const password = generateRandomPassword();
             
             // Get the absolute path
-            const vaultPath = (this.app.vault.adapter as any).basePath;
-            const filePath = require('path').resolve(vaultPath, file.path);
+            const filePath = getPlatformAppropriateFilePath(file.path, this.app);
 
             // Replace placeholders in command
             const command = this.settings.marimoLocalCommand
@@ -695,14 +700,18 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
 
             console.log('Running Marimo command:', command);
 
-            // Run the command
-            const { exec } = require('child_process');
-            const process = exec(command, (error: any) => {
-                if (error) {
-                    console.error('Error running Marimo:', error);
-                    new Notice(`Error running Marimo: ${error.message}`);
-                    this.marimoInstances.delete(file.path);
-                }
+            // Run the command using our cross-platform utility
+            let process: any;
+            await executeCommand(
+                command, 
+                this.app,
+                file.path,
+                undefined // No mobile alternative since we already checked above
+            ).catch(error => {
+                console.error('Error running Marimo:', error);
+                new Notice(`Error running Marimo: ${error.message}`);
+                this.marimoInstances.delete(file.path);
+                throw error;
             });
 
             // Store the instance information
@@ -728,6 +737,12 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
     }
 
     async openRemoteMarimoNotebook(file: TFile, node: GraphNode): Promise<void> {
+        // Check if we're on mobile - Marimo is desktop-only
+        if (isMobileApp()) {
+            new Notice('Remote Marimo notebooks are not supported on mobile devices');
+            return;
+        }
+        
         try {
             // Check if remote settings are configured
             if (!this.settings.marimoRemoteHost || !this.settings.marimoRemoteUser || !this.settings.marimoRemoteKeyPath) {
@@ -903,21 +918,23 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
                 return;
             }
 
+            // Use imported utilities
+            
+            if (isMobileApp()) {
+                // On mobile, show notification that this feature isn't available
+                new Notice('External Python commands are not available on mobile devices');
+                return;
+            }
+
+            // On desktop, proceed normally
             // Get the absolute path
-            const vaultPath = (this.app.vault.adapter as any).basePath;
-            const filePath = require('path').resolve(vaultPath, file.path);
+            const filePath = getPlatformAppropriateFilePath(file.path, this.app);
             
             // Replace filepath in command
             const finalCommand = command.replace('$FILEPATH', `"${filePath}"`);
             console.log('Running default Python command:', finalCommand);
 
-            const { exec } = require('child_process');
-            exec(finalCommand, (error: any) => {
-                if (error) {
-                    console.error('Error running command:', error);
-                    new Notice(`Error running command: ${error.message}`);
-                }
-            });
+            await executeCommand(finalCommand, this.app, file.path);
         } catch (error) {
             console.error('Error executing Python command:', error);
             new Notice(`Error executing Python command: ${error.message}`);
@@ -1151,6 +1168,21 @@ class MMSSettingTab extends PluginSettingTab {
     display(): void {
         const { containerEl } = this;
         containerEl.empty();
+        
+        // Add a note about mobile compatibility if we're on mobile
+        if (isMobileApp()) {
+            const mobileInfoEl = containerEl.createEl('div', { 
+                cls: 'mms-mobile-info-banner'
+            });
+            
+            mobileInfoEl.createEl('h3', { 
+                text: 'Mobile Mode Active'
+            });
+            
+            mobileInfoEl.createEl('p', { 
+                text: 'Some features are limited on mobile devices. External commands and Marimo integration are disabled.'
+            });
+        }
 
         // File Type Actions Section
         containerEl.createEl('h2', { text: 'File Type Actions' });

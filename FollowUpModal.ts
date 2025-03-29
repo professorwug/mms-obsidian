@@ -1,4 +1,5 @@
 import { App, Modal, Setting } from 'obsidian';
+import { isMobileApp } from './utils';
 
 export type NoteType = 'searching' | 'mapping' | 'planning' | 'marimo';
 
@@ -52,9 +53,14 @@ export class FollowUpModal extends Modal {
                 dropdown
                     .addOption('searching', 'Searching')
                     .addOption('mapping', 'Mapping')
-                    .addOption('planning', 'Planning')
-                    .addOption('marimo', 'Marimo (py)')
-                    .setValue(this.result.type)
+                    .addOption('planning', 'Planning');
+                
+                // Only add Marimo option on desktop
+                if (!isMobileApp()) {
+                    dropdown.addOption('marimo', 'Marimo (py)');
+                }
+                
+                dropdown.setValue(this.result.type)
                     .onChange(value => {
                         this.result.type = value as NoteType;
                     });

@@ -183,3 +183,117 @@ If your plugin does not need CSS, delete this file.
     text-decoration-thickness: 1px;
     text-underline-offset: 3px;
 }
+
+/* Mobile info banner in settings */
+.mms-mobile-info-banner {
+    background-color: var(--background-secondary);
+    border-left: 4px solid var(--interactive-accent);
+    padding: 10px 15px;
+    margin-bottom: 20px;
+    border-radius: 4px;
+}
+
+.mms-mobile-info-banner h3 {
+    margin: 0 0 8px 0;
+    color: var(--interactive-accent);
+}
+
+.mms-mobile-info-banner p {
+    margin: 0;
+    color: var(--text-normal);
+}
+
+/* Mobile-specific styles - direct targeting */
+.mobile-view .file-item-content {
+    padding: 5px 8px 6px 8px !important;
+    min-height: 36px !important; /* Minimum height for better touch targets */
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+    position: relative !important; /* For absolute positioning of children */
+}
+
+.mobile-view .file-item {
+    margin-bottom: 2px !important;
+}
+
+/* Reposition collapse icons inline with first line */
+.mobile-view .file-item-content.has-collapse-icon {
+    position: relative !important;
+    padding-left: 20px !important; /* Make room for the icon */
+}
+
+.mobile-view .file-item-content .collapse-icon {
+    font-size: 10px !important;
+    width: 12px !important;
+    margin-right: 0 !important;
+    margin-top: 0 !important;
+    position: absolute !important; 
+    left: 5px !important;
+    top: 8px !important;
+    height: auto !important;
+}
+
+/* Minimize padding to save space */
+.mobile-view.file-browser-container {
+    padding: 4px 4px 4px 0 !important; /* Less padding to maximize available space */
+}
+
+/* Tighten spacing in the file list */
+.mobile-view .file-list {
+    gap: 2px !important;
+}
+
+/* Change layout to stack file name and extensions vertically */
+.mobile-view .file-name-container {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 2px !important;
+    width: 100% !important;
+    padding-right: 0 !important; /* Reset desktop padding */
+    padding-left: 0 !important; /* No need for left padding now */
+}
+
+/* Style full-width mobile extensions */
+.mobile-view .file-extensions.mobile-extensions {
+    position: relative !important;
+    display: flex !important;
+    flex-direction: column !important; /* Stack extensions vertically */
+    width: 100% !important;
+    margin-left: 0 !important;
+    margin-top: 4px !important;
+    margin-bottom: 2px !important;
+    gap: 2px !important;
+    min-width: 0 !important;
+    border-top: 1px solid var(--background-modifier-border) !important;
+    padding-top: 4px !important;
+}
+
+/* Make extension pills full-width and tappable */
+.mobile-view .mobile-extensions .file-extension {
+    font-size: 0.8em !important;
+    padding: 6px 8px !important;
+    border-radius: 4px !important;
+    margin: 0 !important;
+    opacity: 1 !important;
+    background-color: var(--background-secondary) !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    text-align: center !important;
+    font-weight: 500 !important;
+    min-height: 30px !important; /* Better touch target */
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+/* Allow filename to take full width */
+.mobile-view .file-name {
+    flex: 1 !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    white-space: normal !important; /* Allow text wrapping */
+    position: relative !important;
+}
+
+/* We'll add this indicator in the component instead */

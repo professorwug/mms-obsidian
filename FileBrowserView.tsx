@@ -5,6 +5,7 @@ import { buildFileGraph, FileGraph, GraphNode } from './FileGraph';
 import MMSPlugin from './main';
 import { FolgemoveModal } from './FolgemoveModal';
 import { RenameModal } from './RenameModal';
+import { isMobileApp, getPlatformAppropriateFilePath, executeCommand } from './utils';
 
 interface FileTypeCommands {
     [key: string]: string;
@@ -44,6 +45,8 @@ interface FileItemProps {
     onFileClick: (path: string) => void;
     plugin: IMMSPlugin;
     app: App;
+    activeExtensionsPath: string | null;
+    setActiveExtensionsPath: (path: string | null) => void;
 }
 
 const FileItem: React.FC<FileItemProps> = ({ 
@@ -58,13 +61,19 @@ const FileItem: React.FC<FileItemProps> = ({
     onSelect,
     onFileClick,
     plugin,
-    app
+    app,
+    activeExtensionsPath,
+    setActiveExtensionsPath
 }) => {
+    // Extensions are now shown based on activeExtensionsPath
+    const showExtensionsOnMobile = path === activeExtensionsPath;
     const node = graph.nodes.get(path);
     if (!node) return null;
 
     const hasChildren = children && children.length > 0;
     const expanded = expandedPaths.has(path);
+    
+    // We don't need this effect anymore since we're controlling extension visibility at the parent level
     const displayName = node.id ? `${node.id} ${node.name}` : node.name;
     const isSelected = selectedPath === path;
     const isMultiSelected = selectedPaths.has(path);
@@ -86,9 +95,22 @@ const FileItem: React.FC<FileItemProps> = ({
         
         const node = graph.nodes.get(path);
         if (!node) return;
-
-        // Toggle expansion for both files and directories on single click if they have children
-        if (hasChildren) {
+        
+        // On mobile, toggle the active extensions path (only one can be active at a time)
+        if (isMobileApp()) {
+            // If this node has children, toggle expansion
+            if (hasChildren) {
+                console.log('Node has children, toggling expansion');
+                onToggle(path);
+            }
+            
+            // Set this as the active extensions path, without toggling
+            if (node.extensions.size > 0) {
+                setActiveExtensionsPath(path);
+            }
+        }
+        // On desktop, just toggle expansion if there are children
+        else if (hasChildren) {
             console.log('Node has children, toggling expansion');
             onToggle(path);
         } 
@@ -218,6 +240,9 @@ const FileItem: React.FC<FileItemProps> = ({
         const node = graph.nodes.get(path);
 
         if (!node) return;
+        
+        // Add a visible indicator of which item was right-clicked (especially helpful on mobile)
+        onSelect(path, false);
 
         // Add "Create Follow-up Note" option if it's a file
         if (!node.isDirectory) {
@@ -322,14 +347,17 @@ const FileItem: React.FC<FileItemProps> = ({
         }
     };
 
+    // Use smaller indentation on mobile
+    const indentSize = isMobileApp() ? 10 : 20;
+    
     return (
         <>
             <div className={`file-item ${hasChildren ? 'has-children' : ''} ${node.isDirectory ? 'is-folder' : ''}`}>
-                <div className="file-item-indent" style={{ width: `${depth * 20}px` }} />
+                <div className="file-item-indent" style={{ width: `${depth * indentSize}px` }} />
                 <div 
                     className={`file-item-content ${isSelected ? 'is-selected' : ''} ${isMultiSelected ? 'is-multi-selected' : ''} ${
                         node.nodeType ? `is-${node.nodeType}-node` : ''
-                    }`}
+                    } ${hasChildren ? 'has-collapse-icon' : ''}`}
                     onClick={handleClick}
                     onDoubleClick={handleDoubleClick}
                     onContextMenu={handleContextMenu}
@@ -346,24 +374,26 @@ const FileItem: React.FC<FileItemProps> = ({
                             {hasPlanningChild && <span className="node-type-indicator planning">&</span>}
                         </span>
                         {!node.isDirectory && node.extensions.size > 0 && (
-                            <div 
-                                className="file-extensions"
-                                onClick={(e) => {
-                                    console.log('Extensions container clicked');
-                                    e.stopPropagation();
-                                    e.preventDefault();
-                                }}
-                            >
-                                {Array.from(node.extensions).sort().map(ext => (
-                                    <span 
-                                        key={ext} 
-                                        className="file-extension"
-                                        onClick={(e) => handleExtensionClick(e, ext)}
-                                    >
-                                        {ext}
-                                    </span>
-                                ))}
-                            </div>
+                            (!isMobileApp() || showExtensionsOnMobile) && (
+                                <div 
+                                    className={`file-extensions ${isMobileApp() ? 'mobile-extensions' : ''}`}
+                                    onClick={(e) => {
+                                        console.log('Extensions container clicked');
+                                        e.stopPropagation();
+                                        e.preventDefault();
+                                    }}
+                                >
+                                    {Array.from(node.extensions).sort().map(ext => (
+                                        <span 
+                                            key={ext} 
+                                            className="file-extension"
+                                            onClick={(e) => handleExtensionClick(e, ext)}
+                                        >
+                                            {ext}
+                                        </span>
+                                    ))}
+                                </div>
+                            )
                         )}
                     </div>
                 </div>
@@ -402,6 +432,8 @@ const FileItem: React.FC<FileItemProps> = ({
                                     onFileClick={onFileClick}
                                     plugin={plugin}
                                     app={app}
+                                    activeExtensionsPath={activeExtensionsPath}
+                                    setActiveExtensionsPath={setActiveExtensionsPath}
                                 />
                             );
                         })}
@@ -433,6 +465,7 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
     const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(initialExpandedPaths);
     const [selectedPath, setSelectedPath] = React.useState<string | null>(initialSelectedPath);
     const [selectedPaths, setSelectedPaths] = React.useState<Set<string>>(new Set([initialSelectedPath].filter(Boolean) as string[]));
+    const [activeExtensionsPath, setActiveExtensionsPath] = React.useState<string | null>(null);
     const graph = (plugin as MMSPlugin).getActiveGraph();
     
     // Update state when props change
@@ -521,21 +554,28 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                 return;
             }
 
-            if (plugin.settings.htmlBehavior === 'obsidian') {
+            if (plugin.settings.htmlBehavior === 'obsidian' || isMobileApp()) {
                 // Open in Obsidian by simulating a link click
                 console.log('Opening HTML file in Obsidian via link:', path);
                 await app.workspace.openLinkText(file.path, '', true, { active: true });
             } else {
-                // Open in default browser
-                const absolutePath = (app.vault.adapter as any).basePath;
-                const filePath = require('path').resolve(absolutePath, file.path);
-                const { exec } = require('child_process');
-                exec(`open "${filePath}"`, (error: any) => {
-                    if (error) {
-                        console.error('Error opening HTML file:', error);
-                        new Notice(`Error opening HTML file: ${error.message}`);
-                    }
-                });
+                // Open in default browser (desktop only)
+                try {
+                    const absolutePath = (app.vault.adapter as any).basePath;
+                    const filePath = require('path').resolve(absolutePath, file.path);
+                    const { exec } = require('child_process');
+                    exec(`open "${filePath}"`, (error: any) => {
+                        if (error) {
+                            console.error('Error opening HTML file:', error);
+                            new Notice(`Error opening HTML file: ${error.message}`);
+                        }
+                    });
+                } catch (error) {
+                    console.error('Error opening HTML file:', error);
+                    new Notice(`Unable to open in browser: ${error.message}`);
+                    // Fallback to opening in Obsidian
+                    await app.workspace.openLinkText(file.path, '', true, { active: true });
+                }
             }
         } else if (command) {
             // Handle other file types with custom commands
@@ -545,23 +585,34 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                 return;
             }
 
-            // Get the absolute path by combining vault path with file path
-            const vaultPath = (app.vault.adapter as any).basePath;
-            const absolutePath = require('path').resolve(vaultPath, file.path);
-            console.log('Converting to absolute path:', absolutePath);
+            // Use imported utility functions for platform compatibility
 
-            // Run the configured command with absolute path
-            const finalCommand = command.replace('$FILEPATH', `"${absolutePath}"`);
-            console.log('Running command:', finalCommand);
-            const { exec } = require('child_process');
-            exec(finalCommand, (error: any) => {
-                if (error) {
+            if (isMobileApp()) {
+                // On mobile, just open the file in Obsidian if possible
+                new Notice('Custom commands are not supported on mobile. Opening file in Obsidian if possible.');
+                if (file.extension === 'md') {
+                    await app.workspace.getLeaf('tab').openFile(file);
+                } else {
+                    await app.workspace.openLinkText(file.path, '', true, { active: true });
+                }
+            } else {
+                // On desktop, execute the command normally
+                try {
+                    // Get the absolute path by combining vault path with file path
+                    const absolutePath = getPlatformAppropriateFilePath(file.path, app);
+                    console.log('Converting to absolute path:', absolutePath);
+
+                    // Run the configured command with absolute path
+                    const finalCommand = command.replace('$FILEPATH', `"${absolutePath}"`);
+                    console.log('Running command:', finalCommand);
+                    
+                    await executeCommand(finalCommand, app, file.path);
+                    console.log('Command executed successfully');
+                } catch (error) {
                     console.error('Command error:', error);
                     new Notice(`Error running command: ${error.message}`);
-                } else {
-                    console.log('Command executed successfully');
                 }
-            });
+            }
         }
     };
 
@@ -569,12 +620,31 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         Array.from(graph.edges.get('/') || []) as string[], [graph]
     );
 
+    // Add mobile-specific class
+    const containerClass = `file-browser-container ${isMobileApp() ? 'mobile-view' : ''}`;
+    
+    const handleContainerClick = (e: React.MouseEvent) => {
+        // Only clear active extensions if clicking directly on the container (not on a child element)
+        if (e.target === e.currentTarget && isMobileApp()) {
+            setActiveExtensionsPath(null);
+        }
+    };
+    
     return (
         <div 
-            className="file-browser-container"
+            className={containerClass}
             tabIndex={0}
+            onClick={handleContainerClick}
         >
-            <div className="file-list">
+            <div 
+                className="file-list"
+                onClick={(e) => {
+                    // Only clear active extensions if clicking directly on the file-list (not on a child element)
+                    if (e.target === e.currentTarget && isMobileApp()) {
+                        setActiveExtensionsPath(null);
+                    }
+                }}
+            >
                 {rootChildren.map(childPath => {
                     const childNode = graph.nodes.get(childPath);
                     if (!childNode) return null;
@@ -596,6 +666,8 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                             onFileClick={handleFileClick}
                             plugin={plugin}
                             app={app}
+                            activeExtensionsPath={activeExtensionsPath}
+                            setActiveExtensionsPath={setActiveExtensionsPath}
                         />
                     );
                 })}
