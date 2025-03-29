@@ -493,6 +493,10 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         if (extension === 'md' || extension === 'pdf' || (!command && extension !== 'html')) {
             // Default behavior: open in Obsidian in a new tab
             console.log('Opening in Obsidian:', path);
+            
+            // Mark that this file is being opened from the browser
+            (plugin as MMSPlugin).setFileOpenSource('browser');
+            
             const file = app.vault.getAbstractFileByPath(path);
             if (file instanceof TFile) {
                 await app.workspace.getLeaf('tab').openFile(file);

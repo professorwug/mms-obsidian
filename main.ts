@@ -29,6 +29,7 @@ interface MMSPluginSettings {
     marimoRemoteSync: boolean;
     marimoRemoteVaultPath: string;
     ignorePatterns: string[];
+    autoRevealFiles: boolean;
 }
 
 const DEFAULT_SETTINGS: MMSPluginSettings = {
@@ -54,7 +55,8 @@ const DEFAULT_SETTINGS: MMSPluginSettings = {
         '*.pyc',        // Python compiled files
         '.git',         // Git directory
         '.obsidian'     // Obsidian settings directory
-    ]
+    ],
+    autoRevealFiles: true
 }
 
 function generateRandomPort(): number {
@@ -96,7 +98,33 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
     private fileGraph: FileGraph | null = null;
     private marimoInstances: Map<string, MarimoInstance> = new Map();
     private graphUpdateCallbacks: Set<(graph: FileGraph) => void> = new Set();
+    private fileOpenSource: string | null = null; // Track if file was opened from the browser
 
+    // Method to set the file open source (used by FileBrowserView)
+    setFileOpenSource(source: string | null) {
+        this.fileOpenSource = source;
+        
+        // Reset the source after a short delay
+        if (source) {
+            setTimeout(() => {
+                this.fileOpenSource = null;
+            }, 100);
+        }
+    }
+    
+    // Check if a file has a valid folgezettel prefix
+    hasValidFolgezettelPrefix(file: TFile): boolean {
+        const graph = this.getActiveGraph();
+        const node = graph.nodes.get(file.path);
+        return node?.id ? true : false;
+    }
+
+    // Check if the folgezettel browser view is visible
+    isFolgezettelBrowserVisible(): boolean {
+        const leaves = this.app.workspace.getLeavesOfType('folgezettel-browser');
+        return leaves.length > 0;
+    }
+    
     async onload() {
         await this.loadSettings();
 
@@ -130,6 +158,32 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         );
         this.registerEvent(
             this.app.vault.on('rename', debouncedUpdate)
+        );
+        
+        // Register event for file open to auto-reveal in folgezettel browser
+        this.registerEvent(
+            this.app.workspace.on('file-open', (file) => {
+                if (!file) return;
+                
+                // We only want to auto-reveal if:
+                // 1. Auto-reveal is enabled in settings
+                // 2. The browser view is visible
+                // 3. The file has a valid folgezettel prefix
+                // 4. The file wasn't opened from the browser itself
+                const shouldAutoReveal = 
+                    this.settings.autoRevealFiles &&
+                    this.isFolgezettelBrowserVisible() && 
+                    this.hasValidFolgezettelPrefix(file) && 
+                    this.fileOpenSource !== 'browser';
+                
+                if (shouldAutoReveal) {
+                    console.log(`[MMS] Auto-revealing file: ${file.path}`);
+                    // Slight delay to ensure everything is loaded
+                    setTimeout(() => {
+                        this.revealFileInFolgezettelBrowser(file);
+                    }, 50);
+                }
+            })
         );
 
         // Add a ribbon icon for the Folgezettel Browser
@@ -1270,6 +1324,19 @@ class MMSSettingTab extends PluginSettingTab {
                         .split('\n')
                         .map(line => line.trim())
                         .filter(line => line && !line.startsWith('#'));
+                    await this.plugin.saveSettings();
+                }));
+                
+        // Add Browser Behavior section
+        containerEl.createEl('h3', { text: 'Browser Behavior' });
+
+        new Setting(containerEl)
+            .setName('Auto-reveal files')
+            .setDesc('Automatically reveal files in the Folgezettel Browser when opened in the editor')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.autoRevealFiles)
+                .onChange(async (value) => {
+                    this.plugin.settings.autoRevealFiles = value;
                     await this.plugin.saveSettings();
                 }));
     }
