@@ -420,8 +420,19 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
 }) => {
     const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(initialExpandedPaths);
     const [selectedPath, setSelectedPath] = React.useState<string | null>(initialSelectedPath);
-    const [selectedPaths, setSelectedPaths] = React.useState<Set<string>>(new Set());
+    const [selectedPaths, setSelectedPaths] = React.useState<Set<string>>(new Set([initialSelectedPath].filter(Boolean) as string[]));
     const graph = (plugin as MMSPlugin).getActiveGraph();
+    
+    // Update state when props change
+    React.useEffect(() => {
+        console.log('[FileBrowserComponent] Received new initialExpandedPaths:', Array.from(initialExpandedPaths));
+        console.log('[FileBrowserComponent] Received new initialSelectedPath:', initialSelectedPath);
+        setExpandedPaths(initialExpandedPaths);
+        setSelectedPath(initialSelectedPath);
+        if (initialSelectedPath) {
+            setSelectedPaths(new Set([initialSelectedPath]));
+        }
+    }, [initialExpandedPaths, initialSelectedPath]);
 
     // Notify parent of state changes
     React.useEffect(() => {
@@ -597,6 +608,10 @@ export class FileBrowserView extends ItemView {
         return 'Folgezettel Browser';
     }
 
+    getIcon(): string {
+        return 'list-ordered';
+    }
+
     async refreshPreservingState() {
         const expandedPaths = this.currentExpandedPaths;
         const selectedPath = this.currentSelectedPath;
@@ -635,6 +650,10 @@ export class FileBrowserView extends ItemView {
         if (selectedPath) {
             updatedSelectedPath = surrogateToPlaceholder.get(selectedPath) || selectedPath;
         }
+
+        this.currentExpandedPaths = updatedExpandedPaths;
+        this.currentSelectedPath = updatedSelectedPath;
+        this.currentGraph = newGraph;
 
         if (this.root) {
             this.root.render(
@@ -698,5 +717,21 @@ export class FileBrowserView extends ItemView {
 
     getCurrentGraph(): FileGraph | null {
         return this.currentGraph;
+    }
+    
+    getExpandedPaths(): Set<string> {
+        return new Set(this.currentExpandedPaths);
+    }
+    
+    setExpandedPaths(paths: Set<string>): void {
+        this.currentExpandedPaths = new Set(paths);
+    }
+    
+    getSelectedPath(): string | null {
+        return this.currentSelectedPath;
+    }
+    
+    setSelectedPath(path: string | null): void {
+        this.currentSelectedPath = path;
     }
 }

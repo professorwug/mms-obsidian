@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Image OCR with Anthropic</title>
+</head>
+<body>
+  <h1>Image OCR with Anthropic</h1>
+  <input type="file" id="imageUpload" accept="image/*" />
+  <button id="uploadButton">Upload & OCR</button>
+  <pre id="output"></pre>
+
+  <script>
+    // Paste your refined function here:
+    async function uploadImageToAnthropic(imageBase64) {
+      const apiKey = 'A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'; // Replace with your API key
+      const endpoint = 'https://api.anthropic.com/v1/messages';
+    
+      const payload = {
+        model: 'claude-3-5-sonnet-20241022',
+        max_tokens: 1024,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Please transcribe this image into markdown' },
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: 'image/jpeg',
+                data: imageBase64.split(',')[1] // Remove data URL prefix if present
+              }
+            }
+          ]
+        }]
+      };
+    
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify(payload)
+      });
+    
+      if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(`Error ${response.status}: ${errorBody}`);
+      }
+    
+      const result = await response.json();
+      return result.content[0].text;
+    }
+
+    // Converts the selected file to base64 and calls uploadImageToAnthropic
+    async function handleFileUpload() {
+      const fileInput = document.getElementById('imageUpload');
+      const output = document.getElementById('output');
+
+      if (!fileInput.files || fileInput.files.length === 0) {
+        output.textContent = 'No file selected.';
+        return;
+      }
+
+      const file = fileInput.files[0];
+      const reader = new FileReader();
+      
+      reader.onload = async function(event) {
+        try {
+          const base64Data = event.target.result;
+          output.textContent = 'Processing...';
+          const ocrResult = await uploadImageToAnthropic(base64Data);
+          output.textContent = ocrResult;
+        } catch (error) {
+          output.textContent = error.message;
+        }
+      };
+      
+      reader.readAsDataURL(file);
+    }
+
+    // Attach event listener
+    document.getElementById('uploadButton').addEventListener('click', handleFileUpload);
+  </script>
+</body>
+</html>

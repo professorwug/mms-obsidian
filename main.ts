@@ -133,7 +133,7 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         );
 
         // Add a ribbon icon for the Folgezettel Browser
-        const folgezettelRibbonIconEl = this.addRibbonIcon('folder', 'Folgezettel Browser', async (evt: MouseEvent) => {
+        const folgezettelRibbonIconEl = this.addRibbonIcon('list-ordered', 'Folgezettel Browser', async (evt: MouseEvent) => {
             await this.activateView();
         });
         folgezettelRibbonIconEl.addClass('folgezettel-browser-ribbon-class');
@@ -257,6 +257,21 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             }
         });
 
+        // Add Reveal in Folgezettel Browser command
+        this.addCommand({
+            id: 'reveal-in-folgezettel-browser',
+            name: 'Reveal in Folgezettel Browser',
+            checkCallback: (checking: boolean) => {
+                const activeFile = this.app.workspace.getActiveFile();
+                if (!activeFile) return false;
+                
+                if (checking) return true;
+                
+                this.revealFileInFolgezettelBrowser(activeFile);
+                return true;
+            }
+        });
+
         // This adds a settings tab so the user can configure various aspects of the plugin
         this.addSettingTab(new MMSSettingTab(this.app, this));
 
@@ -271,7 +286,21 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
     }
 
     onunload() {
+        // Clean up views
+        console.log(`[MMS] Cleaning up ${this.views.length} Folgezettel Browser views`);
+        
+        // Make a copy of the views array since we'll be modifying it during iteration
+        const viewsToClean = [...this.views];
+        
+        for (const view of viewsToClean) {
+            if (view && view.leaf) {
+                console.log('[MMS] Detaching view:', view.getDisplayText());
+                view.leaf.detach();
+            }
+        }
+        
         this.views = [];
+        
         // Shut down all Marimo servers
         this.shutdownAllMarimoServers();
     }
@@ -288,8 +317,22 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
     async activateView() {
         const { workspace } = this.app;
 
+        // First check if there are any existing leaves
+        const existingLeaves = workspace.getLeavesOfType('folgezettel-browser');
+        
+        // If there are multiple leaves, keep only the first one and detach others
+        if (existingLeaves.length > 1) {
+            console.log(`[MMS] Found ${existingLeaves.length} Folgezettel Browser views, cleaning up duplicates`);
+            // Keep the first leaf and detach others
+            for (let i = 1; i < existingLeaves.length; i++) {
+                existingLeaves[i].detach();
+            }
+        }
+        
+        // Now get the leaf (either the single existing one, or the first one we kept)
         let leaf = workspace.getLeavesOfType('folgezettel-browser')[0];
         if (!leaf) {
+            console.log('[MMS] No Folgezettel Browser view found, creating new one');
             const newLeaf = workspace.getLeftLeaf(false);
             if (!newLeaf) {
                 throw new Error('Could not create leaf for folgezettel-browser');
@@ -299,6 +342,9 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         }
 
         workspace.revealLeaf(leaf);
+        
+        // Return the active view
+        return this.views.find(view => view.leaf === leaf) || this.views[0];
     }
 
     // Method to refresh all file browser views while preserving state
@@ -908,6 +954,80 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         activeView.refreshPreservingState();
 
         new Notice(`Successfully renamed ${filesToRename.length} files`);
+    }
+    
+    async revealFileInFolgezettelBrowser(file: TFile) {
+        // First make sure the Folgezettel Browser view is open and get the active view
+        const view = await this.activateView();
+        
+        if (!view) {
+            new Notice('Folgezettel Browser view not available');
+            return;
+        }
+        
+        // Get the file path
+        const filePath = file.path;
+        
+        // Get the graph
+        const graph = this.getActiveGraph();
+        if (!graph) {
+            new Notice('File graph not available');
+            return;
+        }
+        
+        // Ensure the file exists in the graph
+        const node = graph.nodes.get(filePath);
+        if (!node) {
+            new Notice(`File ${filePath} not found in the graph`);
+            return;
+        }
+        
+        // Find all parent paths that need to be expanded
+        const parentsToExpand = new Set<string>();
+        
+        // Traverse backward through parent nodes
+        let currentPath = filePath;
+        while (currentPath) {
+            // Find the parent of this path
+            let parent: string | null = null;
+            
+            for (const [parentPath, children] of graph.edges.entries()) {
+                if (children.has(currentPath)) {
+                    parent = parentPath;
+                    break;
+                }
+            }
+            
+            // If we found a parent, add it to the set and continue up the tree
+            if (parent && parent !== '/') {
+                parentsToExpand.add(parent);
+                currentPath = parent;
+            } else {
+                break;
+            }
+        }
+        
+        console.log(`[Reveal] Found ${parentsToExpand.size} parent paths to expand:`, Array.from(parentsToExpand));
+        
+        // Create a new expanded paths set with all parents
+        const currentExpandedPaths = view.getExpandedPaths();
+        const newExpandedPaths = new Set([...currentExpandedPaths, ...parentsToExpand]);
+        
+        console.log(`[Reveal] Setting expanded paths:`, Array.from(newExpandedPaths));
+        console.log(`[Reveal] Setting selected path: ${filePath}`);
+        
+        // Update the view's state directly
+        view.setExpandedPaths(newExpandedPaths);
+        view.setSelectedPath(filePath);
+        
+        // Refresh the view to apply changes
+        view.refreshPreservingState();
+        
+        // Additional logging
+        console.log(`[Reveal] After refresh - Expanded paths:`, Array.from(view.getExpandedPaths()));
+        console.log(`[Reveal] After refresh - Selected path: ${view.getSelectedPath()}`);
+        
+        new Notice(`Revealed ${file.name} in Folgezettel Browser`);
     }
 }
 
