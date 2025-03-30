@@ -267,6 +267,7 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
                 await this.folgemove(activeFile, target.path);
             }
         });
+        
 
         // Add Create Follow Up Note command
         this.addCommand({
