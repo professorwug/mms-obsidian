@@ -1,11 +1,11 @@
 import { ItemView, TFile, TFolder, WorkspaceLeaf, Menu, TAbstractFile, Notice, App } from 'obsidian';
 import * as React from 'react';
 import { createRoot, Root } from 'react-dom/client';
-import { buildFileGraph, FileGraph, GraphNode } from './FileGraph';
+import { buildFileGraph, FileGraph, GraphNode, isValidNodeId, getParentId } from './FileGraph';
 import MMSPlugin from './main';
 import { FolgemoveModal } from './FolgemoveModal';
 import { RenameModal } from './RenameModal';
-import { isMobileApp, getPlatformAppropriateFilePath, executeCommand } from './utils';
+import { isMobileApp, getPlatformAppropriateFilePath, executeCommand, getNextAvailableChildId } from './utils';
 
 interface FileTypeCommands {
     [key: string]: string;
@@ -47,6 +47,13 @@ interface FileItemProps {
     app: App;
     activeExtensionsPath: string | null;
     setActiveExtensionsPath: (path: string | null) => void;
+    // Drag and drop props
+    onDragStart?: (path: string) => void;
+    onDragEnd?: (path: string, targetPath: string | null) => void;
+    isDragging?: boolean;
+    draggingPath?: string | null;
+    dragOverPath?: string | null;
+    setDragOverPath?: (path: string | null) => void;
 }
 
 const FileItem: React.FC<FileItemProps> = ({ 
@@ -63,7 +70,14 @@ const FileItem: React.FC<FileItemProps> = ({
     plugin,
     app,
     activeExtensionsPath,
-    setActiveExtensionsPath
+    setActiveExtensionsPath,
+    // Drag and drop props
+    onDragStart,
+    onDragEnd,
+    isDragging,
+    draggingPath,
+    dragOverPath,
+    setDragOverPath
 }) => {
     // Extensions are now shown based on activeExtensionsPath
     const showExtensionsOnMobile = path === activeExtensionsPath;
@@ -91,8 +105,25 @@ const FileItem: React.FC<FileItemProps> = ({
         return childNode?.nodeType === 'planning';
     });
 
+    // Handle mouse down for drag start
+    const handleMouseDown = (e: React.MouseEvent) => {
+        // Check if Option/Alt key is pressed
+        if (e.altKey && onDragStart) {
+            e.preventDefault();
+            e.stopPropagation();
+            onDragStart(path);
+        }
+    };
+
     const handleClick = async (e: React.MouseEvent) => {
         try {
+            // Skip if we're dragging
+            if (isDragging) {
+                e.preventDefault();
+                e.stopPropagation();
+                return;
+            }
+            
             console.log('Main item clicked:', path);
             console.log('Node details:', JSON.stringify({
                 path,
@@ -521,18 +552,56 @@ const FileItem: React.FC<FileItemProps> = ({
         }
     };
 
+    // Handle drag over events
+    const handleDragOver = (e: React.DragEvent) => {
+        if (isDragging && setDragOverPath && draggingPath !== path) {
+            e.preventDefault();
+            e.stopPropagation();
+            setDragOverPath(path);
+        }
+    };
+
+    // Handle drag enter events - used to highlight drop targets
+    const handleDragEnter = (e: React.DragEvent) => {
+        if (isDragging && setDragOverPath && draggingPath !== path) {
+            e.preventDefault();
+            e.stopPropagation();
+            setDragOverPath(path);
+        }
+    };
+
+    // Handle drop events
+    const handleDrop = (e: React.DragEvent) => {
+        if (isDragging && onDragEnd && draggingPath !== path) {
+            e.preventDefault();
+            e.stopPropagation();
+            onDragEnd(draggingPath!, path);
+        }
+    };
+
     // Use smaller indentation on mobile
     const indentSize = isMobileApp() ? 10 : 20;
     
+    // Determine if this is the dragging item or a drop target
+    const isDraggingThis = isDragging && draggingPath === path;
+    const isDropTarget = isDragging && dragOverPath === path;
+    
     return (
         <>
-            <div className={`file-item ${hasChildren ? 'has-children' : ''} ${node.isDirectory ? 'is-folder' : ''}`}>
+            <div 
+                className={`file-item ${hasChildren ? 'has-children' : ''} ${node.isDirectory ? 'is-folder' : ''} ${isDraggingThis ? 'is-dragging' : ''} ${isDropTarget ? 'is-drop-target' : ''}`}
+                draggable={isDragging}
+                onDragOver={handleDragOver}
+                onDragEnter={handleDragEnter}
+                onDrop={handleDrop}
+            >
                 <div className="file-item-indent" style={{ width: `${depth * indentSize}px` }} />
                 <div 
                     className={`file-item-content ${isSelected ? 'is-selected' : ''} ${isMultiSelected ? 'is-multi-selected' : ''} ${
                         node.nodeType ? `is-${node.nodeType}-node` : ''
-                    } ${hasChildren ? 'has-collapse-icon' : ''}`}
+                    } ${hasChildren ? 'has-collapse-icon' : ''} ${isDraggingThis ? 'is-dragging' : ''} ${isDropTarget ? 'is-drop-target' : ''}`}
                     onClick={handleClick}
+                    onMouseDown={handleMouseDown}
                     onDoubleClick={handleDoubleClick}
                     onContextMenu={handleContextMenu}
                 >
@@ -572,7 +641,7 @@ const FileItem: React.FC<FileItemProps> = ({
                     </div>
                 </div>
             </div>
-            {expanded && hasChildren && (
+            {expanded && hasChildren && !isDraggingThis && (
                 <div className="file-item-children">
                     {Array.from(graph.edges.get(path) || [])
                         .filter(childPath => childPath !== '/') // Filter out the root node
@@ -613,6 +682,13 @@ const FileItem: React.FC<FileItemProps> = ({
                                     app={app}
                                     activeExtensionsPath={activeExtensionsPath}
                                     setActiveExtensionsPath={setActiveExtensionsPath}
+                                    // Pass down drag and drop props
+                                    onDragStart={onDragStart}
+                                    onDragEnd={onDragEnd}
+                                    isDragging={isDragging}
+                                    draggingPath={draggingPath}
+                                    dragOverPath={dragOverPath}
+                                    setDragOverPath={setDragOverPath}
                                 />
                             );
                         })}
@@ -645,6 +721,12 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
     const [selectedPath, setSelectedPath] = React.useState<string | null>(initialSelectedPath);
     const [selectedPaths, setSelectedPaths] = React.useState<Set<string>>(new Set([initialSelectedPath].filter(Boolean) as string[]));
     const [activeExtensionsPath, setActiveExtensionsPath] = React.useState<string | null>(null);
+    
+    // Drag and drop state
+    const [isDragging, setIsDragging] = React.useState<boolean>(false);
+    const [draggingPath, setDraggingPath] = React.useState<string | null>(null);
+    const [dragOverPath, setDragOverPath] = React.useState<string | null>(null);
+    
     const graph = (plugin as MMSPlugin).getActiveGraph();
     
     // Update state when props change
@@ -690,7 +772,358 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         }
     }, []);
 
+    // Find the parent path of a node
+    const findParentPath = (childPath: string): string | null => {
+        for (const [parentPath, children] of graph.edges.entries()) {
+            if (children.has(childPath)) {
+                return parentPath;
+            }
+        }
+        return null;
+    };
+
+    // Get siblings of a node (nodes that share the same parent)
+    const getSiblings = (path: string): string[] => {
+        const parentPath = findParentPath(path);
+        if (!parentPath) return [];
+        
+        return Array.from(graph.edges.get(parentPath) || [])
+            .filter(p => p !== path && p !== '/'); // Exclude self and root node
+    };
+
+    // Handle the start of dragging
+    const handleDragStart = (path: string) => {
+        setIsDragging(true);
+        setDraggingPath(path);
+        
+        // Select the dragged node
+        setSelectedPath(path);
+        setSelectedPaths(new Set([path]));
+        
+        // Show a notice to the user
+        new Notice('Drag mode activated. Drag to reorder. ESC to cancel.');
+        
+        // Add a document-level event listener for ESC key to cancel dragging
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                setIsDragging(false);
+                setDraggingPath(null);
+                setDragOverPath(null);
+                document.removeEventListener('keydown', handleKeyDown);
+                new Notice('Drag cancelled.');
+            }
+        };
+        document.addEventListener('keydown', handleKeyDown);
+    };
+
+    // Handle the end of dragging
+    const handleDragEnd = async (sourcePath: string, targetPath: string) => {
+        if (!sourcePath || !targetPath) {
+            setIsDragging(false);
+            setDraggingPath(null);
+            setDragOverPath(null);
+            return;
+        }
+        
+        // Ensure source and target have the same parent (siblings)
+        const sourceParent = findParentPath(sourcePath);
+        const targetParent = findParentPath(targetPath);
+        
+        if (!sourceParent || !targetParent || sourceParent !== targetParent) {
+            new Notice('Drag and drop is only allowed between siblings.');
+            setIsDragging(false);
+            setDraggingPath(null);
+            setDragOverPath(null);
+            return;
+        }
+        
+        try {
+            // Get all siblings in current order
+            const allSiblings = Array.from(graph.edges.get(sourceParent) || [])
+                .filter(p => p !== '/') // Filter out root node
+                .sort((a, b) => {
+                    const nodeA = graph.nodes.get(a);
+                    const nodeB = graph.nodes.get(b);
+                    if (!nodeA || !nodeB) return 0;
+                    
+                    // Sort by ID if available
+                    if (nodeA.id && nodeB.id) {
+                        return nodeA.id.localeCompare(nodeB.id);
+                    }
+                    
+                    // Fall back to display name
+                    const displayNameA = nodeA.id ? 
+                        `${nodeA.id}${nodeA.name ? ' ' + nodeA.name : ''}` : 
+                        (nodeA.name || a);
+                    const displayNameB = nodeB.id ? 
+                        `${nodeB.id}${nodeB.name ? ' ' + nodeB.name : ''}` : 
+                        (nodeB.name || b);
+                    return displayNameA.localeCompare(displayNameB);
+                });
+            
+            // Create a new order by removing the source and inserting at target position
+            const newOrder = [...allSiblings];
+            const sourceIndex = newOrder.indexOf(sourcePath);
+            newOrder.splice(sourceIndex, 1); // Remove source
+            
+            // Find the target index
+            const targetIndex = newOrder.indexOf(targetPath);
+            newOrder.splice(targetIndex, 0, sourcePath); // Insert at target position
+            
+            // Now reorder the IDs
+            await renameSiblingsInOrder(sourceParent, newOrder);
+            
+            // Show notification of success
+            new Notice(`Reordered ${newOrder.length} files`);
+        } catch (error) {
+            console.error('Error reordering files:', error);
+            new Notice(`Error reordering files: ${error.message || 'Unknown error'}`);
+        } finally {
+            // Reset drag state
+            setIsDragging(false);
+            setDraggingPath(null);
+            setDragOverPath(null);
+        }
+    };
+
+    // Function to rename siblings in the new order
+    const renameSiblingsInOrder = async (parentPath: string, orderedSiblings: string[]) => {
+        // Extract the parent node's ID
+        const parentNode = graph.nodes.get(parentPath);
+        if (!parentNode) {
+            throw new Error('Parent node not found');
+        }
+        
+        const parentId = parentNode.id || '';
+        
+        // Only proceed if we have ordered siblings and parent ID
+        if (orderedSiblings.length === 0 || !parentId) {
+            return;
+        }
+        
+        // Generate new IDs for all siblings following the Folgezettel pattern
+        const idChanges = generateSiblingIds(parentPath, orderedSiblings, graph);
+        
+        // Prepare batch of rename operations for direct siblings
+        const directRenameOperations = [];
+        
+        // Prepare rename operations for each changed ID
+        for (const [oldId, newId] of idChanges.entries()) {
+            // Find the node(s) with this ID
+            for (const [nodePath, node] of graph.nodes.entries()) {
+                if (node.id === oldId) {
+                    // For each file in the node, prepare a rename
+                    for (const path of node.paths) {
+                        const file = app.vault.getAbstractFileByPath(path);
+                        if (file instanceof TFile) {
+                            directRenameOperations.push({
+                                file,
+                                oldId,
+                                newId
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        
+        // If there are no ID changes, we can exit early
+        if (idChanges.size === 0) {
+            return;
+        }
+        
+        // Show initial notification
+        new Notice(`Reordering nodes and updating their children...`);
+        
+        // Execute all direct sibling renames first
+        for (const op of directRenameOperations) {
+            // Get the file name without the ID
+            const { file, oldId, newId } = op;
+            const oldName = file.basename;
+            
+            // Replace just the ID part
+            const newName = oldName.replace(oldId, newId);
+            
+            // Skip if name hasn't changed
+            if (oldName === newName) continue;
+            
+            try {
+                await (plugin as MMSPlugin).renameFileWithExtensions(file, newName);
+            } catch (error) {
+                console.error(`Failed to rename ${file.path}:`, error);
+                throw error; // Re-throw to be caught by the caller
+            }
+        }
+        
+        // Now update the children of changed nodes
+        // This needs to wait a moment for the file system changes to propagate
+        // and the graph to update with the new parent IDs
+        setTimeout(async () => {
+            try {
+                // Get the updated graph
+                const updatedGraph = (plugin as MMSPlugin).getActiveGraph();
+                
+                // Collect all descendants that need renaming
+                const childRenameOperations = [];
+                
+                // For each ID change
+                for (const [oldId, newId] of idChanges.entries()) {
+                    // Find all descendant IDs that start with the old parent ID
+                    for (const [nodePath, node] of updatedGraph.nodes.entries()) {
+                        if (!node.id) continue;
+                        
+                        // Check if this is a descendant of the changed node
+                        if (node.id !== oldId && node.id.startsWith(oldId)) {
+                            // Generate the new descendant ID by replacing the prefix
+                            const newDescendantId = node.id.replace(new RegExp(`^${oldId}`), newId);
+                            
+                            // For each file in the node, prepare a rename
+                            for (const path of node.paths) {
+                                const file = app.vault.getAbstractFileByPath(path);
+                                if (file instanceof TFile) {
+                                    childRenameOperations.push({
+                                        file,
+                                        oldId: node.id,
+                                        newId: newDescendantId
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Execute all child renames
+                if (childRenameOperations.length > 0) {
+                    new Notice(`Updating ${childRenameOperations.length} child nodes...`);
+                    
+                    for (const op of childRenameOperations) {
+                        const { file, oldId, newId } = op;
+                        const oldName = file.basename;
+                        const newName = oldName.replace(oldId, newId);
+                        
+                        if (oldName === newName) continue;
+                        
+                        try {
+                            await (plugin as MMSPlugin).renameFileWithExtensions(file, newName);
+                        } catch (error) {
+                            console.error(`Failed to rename child ${file.path}:`, error);
+                            // Continue with other renames even if one fails
+                        }
+                    }
+                    
+                    new Notice(`Successfully updated ${childRenameOperations.length} child nodes`);
+                }
+            } catch (error) {
+                console.error('Error updating children:', error);
+                new Notice(`Error updating children: ${error.message || 'Unknown error'}`);
+            }
+        }, 1000); // Wait 1 second for the graph to update
+    };
+    
+    // Generate sibling IDs following the correct Folgezettel pattern
+    const generateSiblingIds = (parentPath: string, orderedSiblings: string[], graph: FileGraph): Map<string, string> => {
+        // Get the parent node
+        const parentNode = graph.nodes.get(parentPath);
+        if (!parentNode) return new Map();
+        
+        // Get the parent ID (removing any special suffix like * or &)
+        const parentId = (parentNode.id || '').replace(/[*&!@$%^#_-]$/, '');
+        if (!parentId) return new Map();
+        
+        // Map to store old ID -> new ID
+        const idMap = new Map<string, string>();
+        
+        // Analyze the structure of the original IDs to determine the pattern we should follow
+        const originalIDs = [];
+        for (const siblingPath of orderedSiblings) {
+            const node = graph.nodes.get(siblingPath);
+            if (node?.id) {
+                // Remove any special suffix for pattern analysis
+                originalIDs.push(node.id.replace(/[*&!@$%^#_-]$/, ''));
+            }
+        }
+        
+        // Find the last segment common to all IDs
+        // This helps identify if we're dealing with level 1 nodes (e.g., 01, 02, 03)
+        // or deeper level nodes (e.g., 01a01, 01a02, 01a03)
+        let isFirstLevel = false;
+        if (originalIDs.length > 0) {
+            // If all original IDs are simple 2-digit numbers, we're at the first level
+            const allFirstLevel = originalIDs.every(id => /^\d{2}$/.test(id));
+            if (allFirstLevel) {
+                isFirstLevel = true;
+            } else {
+                // Check if all IDs share the same parent
+                const parentSegment = getParentId(originalIDs[0]);
+                const allSameParent = originalIDs.every(id => getParentId(id) === parentSegment);
+                if (allSameParent) {
+                    isFirstLevel = false;
+                } else {
+                    // Default to treating as first level
+                    isFirstLevel = true;
+                }
+            }
+        }
+        
+        // Generate new IDs for each sibling
+        for (let i = 0; i < orderedSiblings.length; i++) {
+            const siblingPath = orderedSiblings[i];
+            const siblingNode = graph.nodes.get(siblingPath);
+            if (!siblingNode || !siblingNode.id) continue;
+            
+            // Get the old ID and any special suffix (like * for mapping nodes)
+            const oldId = siblingNode.id;
+            const specialSuffix = oldId.match(/[*&!@$%^#_-]$/)?.[0] || '';
+            
+            // Extract the core ID (without special suffix)
+            const baseOldId = oldId.replace(/[*&!@$%^#_-]$/, '');
+            
+            let newId: string;
+            
+            if (isFirstLevel) {
+                // First level nodes are always two-digit numbers: 01, 02, 03...
+                newId = (i + 1).toString().padStart(2, '0') + specialSuffix;
+            } else {
+                // Get the parent segment of the ID
+                const parentSegment = getParentId(baseOldId);
+                if (!parentSegment) {
+                    // If we can't determine parent, skip this node
+                    continue;
+                }
+                
+                // Determine whether parent ends with letter or number for alternating pattern
+                const parentEndsWithLetter = /[a-zA-Z]$/.test(parentSegment);
+                
+                if (parentEndsWithLetter) {
+                    // Parent ends with letter, children use numbers
+                    // Format: 01a01, 01a02, etc.
+                    const num = (i + 1).toString().padStart(2, '0');
+                    newId = parentSegment + num + specialSuffix;
+                } else {
+                    // Parent ends with number, children use letters
+                    // Format: 01a, 01b, etc.
+                    const letterCode = 'a'.charCodeAt(0) + i;
+                    // Handle overflow (after 'z')
+                    const letter = letterCode <= 122 ? 
+                        String.fromCharCode(letterCode) : 
+                        `a${String.fromCharCode(96 + ((letterCode - 96) % 26))}`;
+                    newId = parentSegment + letter + specialSuffix;
+                }
+            }
+            
+            // Store the mapping if ID has changed
+            if (oldId !== newId) {
+                idMap.set(oldId, newId);
+            }
+        }
+        
+        return idMap;
+    };
+    
     const handleFileClick = async (path: string) => {
+        // Skip if we're dragging
+        if (isDragging) return;
+        
         console.log('File click handler called with path:', path);
         const node = graph.nodes.get(path);
         if (!node || node.isDirectory) {
@@ -850,6 +1283,13 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                             app={app}
                             activeExtensionsPath={activeExtensionsPath}
                             setActiveExtensionsPath={setActiveExtensionsPath}
+                            // Drag and drop props
+                            onDragStart={handleDragStart}
+                            onDragEnd={handleDragEnd}
+                            isDragging={isDragging}
+                            draggingPath={draggingPath}
+                            dragOverPath={dragOverPath}
+                            setDragOverPath={setDragOverPath}
                         />
                     );
                 })}

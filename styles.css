@@ -297,3 +297,48 @@ If your plugin does not need CSS, delete this file.
 }
 
 /* We'll add this indicator in the component instead */
+
+/* Drag and drop styles */
+.file-item.is-dragging {
+    opacity: 0.5;
+    position: relative;
+    z-index: 1000;
+    cursor: grabbing;
+}
+
+.file-item.is-dragging .file-item-content {
+    background-color: var(--background-modifier-border);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.file-item.is-drop-target {
+    position: relative;
+}
+
+.file-item.is-drop-target::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -2px;
+    height: 2px;
+    background-color: var(--interactive-accent);
+    z-index: 10;
+}
+
+/* Style for items that can be dragged (alt/option key hover) */
+.file-item-content:hover {
+    position: relative;
+}
+
+.file-item-content:hover::after {
+    content: 'Alt+Click to reorder';
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 10px;
+    color: var(--text-muted);
+    opacity: 0.7;
+    pointer-events: none;
+}
