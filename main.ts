@@ -57,7 +57,7 @@ const DEFAULT_SETTINGS: MMSPluginSettings = {
         '.git',         // Git directory
         '.obsidian'     // Obsidian settings directory
     ],
-    autoRevealFiles: true
+    autoRevealFiles: false
 }
 
 function generateRandomPort(): number {
