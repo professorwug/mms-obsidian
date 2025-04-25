@@ -727,7 +727,25 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
     const [draggingPath, setDraggingPath] = React.useState<string | null>(null);
     const [dragOverPath, setDragOverPath] = React.useState<string | null>(null);
     
+    // Track graph version to force re-render when the graph is updated
+    const [graphVersion, setGraphVersion] = React.useState(0);
+    
+    // Get the current graph
     const graph = (plugin as MMSPlugin).getActiveGraph();
+    
+    // Subscribe to graph updates
+    React.useEffect(() => {
+        const handleGraphUpdate = (updatedGraph: FileGraph) => {
+            // Increment graph version to trigger re-render
+            setGraphVersion(prev => prev + 1);
+        };
+        
+        (plugin as MMSPlugin).subscribeToGraphUpdates(handleGraphUpdate);
+        
+        return () => {
+            (plugin as MMSPlugin).unsubscribeFromGraphUpdates(handleGraphUpdate);
+        };
+    }, [plugin]);
     
     // Update state when props change
     React.useEffect(() => {

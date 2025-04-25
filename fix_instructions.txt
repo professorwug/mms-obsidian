@@ -1,0 +1,15 @@
+To complete the task of removing '@&%' from the list of problematic symbols, please make the following manual change in the main.ts file:
+
+1. Find line 336 in main.ts which currently contains:
+   ```typescript
+   const problematicSymbols = '*"\\/\\<>:|?`#@&';
+   ```
+
+2. Replace it with:
+   ```typescript
+   const problematicSymbols = getProblematicSymbols();
+   ```
+
+This will use the centralized function we've created in utils.ts, which already has the updated list of problematic symbols (without '@&%').
+
+The updated function in utils.ts now returns '*"\\/\\<>:|?`#' as the list of problematic symbols, which excludes '@', '&', and '%' since these are used by the plugin.

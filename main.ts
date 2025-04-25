@@ -3,7 +3,8 @@ import { FileBrowserView } from './FileBrowserView';
 import { FolgemoveModal } from './FolgemoveModal';
 import { FollowUpModal } from './FollowUpModal';
 import { RenameModal } from './RenameModal';
-import { getNextAvailableChildId, isMobileApp, executeCommand, getPlatformAppropriateFilePath } from './utils';
+import { RenameSymbolsModal } from './RenameSymbolsModal';
+import { getNextAvailableChildId, isMobileApp, executeCommand, getPlatformAppropriateFilePath, findFilesWithProblematicSymbols, getProblematicSymbols } from './utils';
 import { FileGraph, buildFileGraph, GraphNode } from './FileGraph';
 
 // Remember to rename these classes and interfaces!
@@ -290,6 +291,78 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             name: 'Shutdown All Marimo Servers',
             callback: () => {
                 this.shutdownAllMarimoServers();
+            }
+        });
+        
+        // Add Fix Special Characters in Filenames command
+        this.addCommand({
+            id: 'fix-special-characters',
+            name: 'Fix Special Characters in Filenames',
+            callback: async () => {
+                // Find files with problematic characters
+                const problematicFiles = findFilesWithProblematicSymbols(this.app);
+                
+                if (problematicFiles.length === 0) {
+                    new Notice('No files with special characters found.');
+                    return;
+                }
+                
+                // Open the modal to let the user choose which symbol to replace
+                const modal = new RenameSymbolsModal(this.app, problematicFiles);
+                const result = await modal.openAndGetValue();
+                
+                if (!result) {
+                    // User cancelled
+                    return;
+                }
+                
+                // Process files based on user selection
+                let processedCount = 0;
+                let errorCount = 0;
+                
+                for (const file of problematicFiles) {
+                    try {
+                        // Check if the file contains the target symbol
+                        if (result.targetSymbol && !file.basename.includes(result.targetSymbol)) {
+                            continue;
+                        }
+                        
+                        // Create new name by replacing the target symbol
+                        let newName = file.basename;
+                        if (result.targetSymbol) {
+                            // Replace specific symbol
+                            newName = newName.split(result.targetSymbol).join(result.replacementSymbol);
+                        } else {
+                            // Replace all problematic symbols
+                            const problematicSymbols = getProblematicSymbols();
+                            for (const symbol of problematicSymbols) {
+                                newName = newName.split(symbol).join(result.replacementSymbol);
+                            }
+                        }
+                        
+                        // Only rename if the name actually changed
+                        if (newName !== file.basename) {
+                            // Add extension back
+                            const newPath = file.parent?.path 
+                                ? `${file.parent.path}/${newName}${file.extension ? '.' + file.extension : ''}` 
+                                : `${newName}${file.extension ? '.' + file.extension : ''}`;
+                            
+                            // Use Obsidian's rename method to update links
+                            await this.app.fileManager.renameFile(file, newPath);
+                            processedCount++;
+                        }
+                    } catch (error) {
+                        console.error(`Error renaming file ${file.path}:`, error);
+                        errorCount++;
+                    }
+                }
+                
+                // Show results
+                if (errorCount > 0) {
+                    new Notice(`Renamed ${processedCount} files. Encountered ${errorCount} errors.`);
+                } else {
+                    new Notice(`Successfully renamed ${processedCount} files.`);
+                }
             }
         });
 

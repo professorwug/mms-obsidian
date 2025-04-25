@@ -1,5 +1,5 @@
 import { FileGraph } from './FileGraph';
-import { Platform, App } from 'obsidian';
+import { Platform, App, TFile } from 'obsidian';
 
 /**
  * Checks if the plugin is running on a mobile device
@@ -197,4 +197,42 @@ export function getNextAvailableChildId(parentPath: string, graph: FileGraph): s
 
         throw new Error(`No available number suffixes for parent ${baseParentId}`);
     }
+}
+
+/**
+ * Get the list of problematic symbols that can cause issues on various operating systems
+ * @returns String containing problematic symbols
+ */
+export function getProblematicSymbols(): string {
+    // List of characters that can cause problems on various operating systems
+    // Note: @, &, and % are explicitly excluded as they're used by the plugin
+    return '*"\/\\<>:|?`#';
+}
+
+/**
+ * Find files with problematic characters in their filenames
+ * @param app The Obsidian app instance
+ * @param targetSymbol Optional specific symbol to look for (if not provided, checks for all problematic symbols)
+ * @returns Array of files with problematic characters in their names
+ */
+export function findFilesWithProblematicSymbols(app: App, targetSymbol?: string): TFile[] {
+    const problematicSymbols = getProblematicSymbols();
+    const files = app.vault.getFiles();
+    
+    return files.filter(file => {
+        const basename = file.basename;
+        
+        if (targetSymbol) {
+            // Check for specific symbol
+            return basename.includes(targetSymbol);
+        } else {
+            // Check for any problematic symbol
+            for (const symbol of problematicSymbols) {
+                if (basename.includes(symbol)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    });
 }
