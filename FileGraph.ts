@@ -36,7 +36,7 @@ export function isValidNodeId(nodeId: string): boolean {
     
     // Handle special characters at the end (mapping, planning, etc.)
     let idToCheck = nodeId;
-    const specialChars = "*&!@$%^#_-";
+    const specialChars = "&!@$%^#_-";  // * removed as it's not allowed on Windows
     if (specialChars.includes(nodeId[nodeId.length - 1])) {
         // Remove the special character for validation
         idToCheck = nodeId.slice(0, -1);
@@ -103,7 +103,7 @@ export function getParentId(nodeId: string): string | null {
     if (!isValidNodeId(nodeId)) return null;
 
     // Check for special character at the end (mapping, planning, etc.)
-    const specialChars = "*&!@$%^#_-";
+    const specialChars = "&!@$%^#_-";  // * removed as it's not allowed on Windows
     if (specialChars.includes(nodeId[nodeId.length - 1])) {
         // For special nodes, the parent is the ID without the special character
         return nodeId.substring(0, nodeId.length - 1);
@@ -309,7 +309,7 @@ export function buildFileGraph(items: Array<TFile | TFolder>, app: App): FileGra
         // Determine node type based on ID suffix
         let nodeType: 'mapping' | 'planning' | undefined;
         if (id) {
-            if (id.endsWith('*')) nodeType = 'mapping';
+            if (id.endsWith('%')) nodeType = 'mapping';
             else if (id.endsWith('&')) nodeType = 'planning';
         }
 

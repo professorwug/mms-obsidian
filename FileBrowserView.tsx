@@ -613,7 +613,7 @@ const FileItem: React.FC<FileItemProps> = ({
                     <div className="file-name-container">
                         <span className="file-name">
                             {displayName}
-                            {hasMappingChild && <span className="node-type-indicator mapping">*</span>}
+                            {hasMappingChild && <span className="node-type-indicator mapping">%</span>}
                             {hasPlanningChild && <span className="node-type-indicator planning">&</span>}
                         </span>
                         {!node.isDirectory && node.extensions.size > 0 && (
