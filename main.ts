@@ -1172,6 +1172,18 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         console.log(`[Reveal] After refresh - Expanded paths:`, Array.from(view.getExpandedPaths()));
         console.log(`[Reveal] After refresh - Selected path: ${view.getSelectedPath()}`);
         
+        // Add a small delay to ensure the DOM has updated before scrolling
+        setTimeout(() => {
+            // Find the selected element and scroll to it
+            const selectedElement = view.containerEl.querySelector('.file-item.selected');
+            if (selectedElement) {
+                selectedElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                console.log('[Reveal] Scrolled to selected element');
+            } else {
+                console.log('[Reveal] Could not find selected element to scroll to');
+            }
+        }, 200);
+        
         new Notice(`Revealed ${file.name} in Folgezettel Browser`);
     }
 }

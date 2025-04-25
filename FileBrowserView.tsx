@@ -54,6 +54,8 @@ interface FileItemProps {
     draggingPath?: string | null;
     dragOverPath?: string | null;
     setDragOverPath?: (path: string | null) => void;
+    // Ref for scrolling
+    fileItemRefs?: React.MutableRefObject<Map<string, HTMLDivElement>>;
 }
 
 const FileItem: React.FC<FileItemProps> = ({ 
@@ -77,8 +79,22 @@ const FileItem: React.FC<FileItemProps> = ({
     isDragging,
     draggingPath,
     dragOverPath,
-    setDragOverPath
+    setDragOverPath,
+    // Ref for scrolling
+    fileItemRefs
 }) => {
+    // Create a ref for the file item element
+    const itemRef = React.useRef<HTMLDivElement>(null);
+    
+    // Register the ref with the fileItemRefs map when the component mounts or path changes
+    React.useEffect(() => {
+        if (itemRef.current && fileItemRefs) {
+            fileItemRefs.current.set(path, itemRef.current);
+            return () => {
+                fileItemRefs.current.delete(path);
+            };
+        }
+    }, [path, fileItemRefs]);
     // Extensions are now shown based on activeExtensionsPath
     const showExtensionsOnMobile = path === activeExtensionsPath;
     const node = graph.nodes.get(path);
@@ -589,11 +605,23 @@ const FileItem: React.FC<FileItemProps> = ({
     return (
         <>
             <div 
-                className={`file-item ${hasChildren ? 'has-children' : ''} ${node.isDirectory ? 'is-folder' : ''} ${isDraggingThis ? 'is-dragging' : ''} ${isDropTarget ? 'is-drop-target' : ''}`}
-                draggable={isDragging}
+                className={`file-item ${hasChildren ? 'has-children' : ''} ${node.isDirectory ? 'is-folder' : ''} ${isDraggingThis ? 'is-dragging' : ''} ${isDropTarget ? 'is-drop-target' : ''} ${isSelected ? 'selected' : ''}`}
+                draggable={true}
                 onDragOver={handleDragOver}
                 onDragEnter={handleDragEnter}
                 onDrop={handleDrop}
+                onDragStart={(e) => {
+                    if (onDragStart) {
+                        e.dataTransfer.setData('text/plain', path);
+                        onDragStart(path);
+                    }
+                }}
+                onDragEnd={() => {
+                    if (onDragEnd && draggingPath) {
+                        onDragEnd(draggingPath, null);
+                    }
+                }}
+                ref={itemRef}
             >
                 <div className="file-item-indent" style={{ width: `${depth * indentSize}px` }} />
                 <div 
@@ -689,6 +717,7 @@ const FileItem: React.FC<FileItemProps> = ({
                                     draggingPath={draggingPath}
                                     dragOverPath={dragOverPath}
                                     setDragOverPath={setDragOverPath}
+                                    fileItemRefs={fileItemRefs}
                                 />
                             );
                         })}
@@ -717,6 +746,8 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
     initialSelectedPath,
     onStateChange
 }) => {
+    // Create a ref map to store references to file items
+    const fileItemRefs = React.useRef<Map<string, HTMLDivElement>>(new Map());
     const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(initialExpandedPaths);
     const [selectedPath, setSelectedPath] = React.useState<string | null>(initialSelectedPath);
     const [selectedPaths, setSelectedPaths] = React.useState<Set<string>>(new Set([initialSelectedPath].filter(Boolean) as string[]));
@@ -727,26 +758,40 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
     const [draggingPath, setDraggingPath] = React.useState<string | null>(null);
     const [dragOverPath, setDragOverPath] = React.useState<string | null>(null);
     
-    // Track graph version to force re-render when the graph is updated
-    const [graphVersion, setGraphVersion] = React.useState(0);
-    
-    // Get the current graph
-    const graph = (plugin as MMSPlugin).getActiveGraph();
+    // Store the graph in state to avoid retrieving it during render
+    const [graph, setGraph] = React.useState<FileGraph>(() => {
+        // Initial graph retrieval (only happens once during initialization)
+        return (plugin as MMSPlugin).getActiveGraph();
+    });
     
     // Subscribe to graph updates
     React.useEffect(() => {
         const handleGraphUpdate = (updatedGraph: FileGraph) => {
-            // Increment graph version to trigger re-render
-            setGraphVersion(prev => prev + 1);
+            // Update the graph state when it changes
+            setGraph(updatedGraph);
         };
         
+        // Subscribe to graph updates
         (plugin as MMSPlugin).subscribeToGraphUpdates(handleGraphUpdate);
         
+        // Clean up subscription when component unmounts
         return () => {
             (plugin as MMSPlugin).unsubscribeFromGraphUpdates(handleGraphUpdate);
         };
     }, [plugin]);
     
+    // Function to scroll to the selected file
+    const scrollToSelectedFile = React.useCallback((path: string | null) => {
+        if (!path) return;
+        
+        // Get the ref for the selected file
+        const element = fileItemRefs.current.get(path);
+        if (element) {
+            // Scroll the element into view with smooth behavior
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }, []);
+
     // Update state when props change
     React.useEffect(() => {
         console.log('[FileBrowserComponent] Received new initialExpandedPaths:', Array.from(initialExpandedPaths));
@@ -755,8 +800,13 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         setSelectedPath(initialSelectedPath);
         if (initialSelectedPath) {
             setSelectedPaths(new Set([initialSelectedPath]));
+            
+            // Add a small delay to ensure the DOM has updated before scrolling
+            setTimeout(() => {
+                scrollToSelectedFile(initialSelectedPath);
+            }, 100);
         }
-    }, [initialExpandedPaths, initialSelectedPath]);
+    }, [initialExpandedPaths, initialSelectedPath, scrollToSelectedFile]);
 
     // Notify parent of state changes
     React.useEffect(() => {
@@ -1308,6 +1358,8 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                             draggingPath={draggingPath}
                             dragOverPath={dragOverPath}
                             setDragOverPath={setDragOverPath}
+                            // Ref for scrolling
+                            fileItemRefs={fileItemRefs}
                         />
                     );
                 })}
