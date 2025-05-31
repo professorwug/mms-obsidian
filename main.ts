@@ -6,6 +6,9 @@ import { RenameModal } from './RenameModal';
 import { RenameSymbolsModal } from './RenameSymbolsModal';
 import { getNextAvailableChildId, isMobileApp, executeCommand, getPlatformAppropriateFilePath, findFilesWithProblematicSymbols, getProblematicSymbols } from './utils';
 import { FileGraph, buildFileGraph, GraphNode } from './FileGraph';
+import * as path from 'path';
+import { exec as execCb } from 'child_process';
+import * as fs from 'fs';
 
 // Remember to rename these classes and interfaces!
 
@@ -732,7 +735,7 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             const newFilePath = parentFolder ? `${parentFolder}/${newFileName}` : newFileName;
 
             // Create file with appropriate initial content
-            let initialContent = '';
+            const initialContent = '';
             if (result.type === 'marimo') {
                 //  initialContent = `# %% [${parentNode.id}]\n# Follow-up to ${parentNode.id}\n\n`;
             }
@@ -831,7 +834,7 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             
             // Get the absolute path from the vault adapter
             const vaultPath = (this.app.vault.adapter as any).basePath;
-            const localPath = require('path').resolve(vaultPath, node.path);
+            const localPath = path.resolve(vaultPath, node.path);
             
             let remotePath: string;
             if (this.settings.marimoRemoteSync) {
@@ -846,7 +849,7 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
                 }
                 // Get the relative path from the vault root
                 const relativePath = file.path;
-                remotePath = require('path').posix.join(this.settings.marimoRemoteVaultPath, relativePath);
+                remotePath = path.posix.join(this.settings.marimoRemoteVaultPath, relativePath);
             }
             
             // Escape quotes in paths
@@ -860,9 +863,8 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
                 console.log('Copying file to remote server:', scpCommand);
                 
                 // Run scp command
-                const { exec } = require('child_process');
                 await new Promise<void>((resolve, reject) => {
-                    exec(scpCommand, (error: any) => {
+                    execCb(scpCommand, (error: any) => {
                         if (error) {
                             reject(error);
                         } else {
@@ -885,8 +887,7 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             console.log('Running remote command:', sshCommand);
 
             // Run the SSH command
-            const { exec } = require('child_process');
-            const process = exec(sshCommand, (error: any) => {
+            const process = execCb(sshCommand, (error: any) => {
                 if (error) {
                     console.error('Error running remote Marimo:', error);
                     new Notice(`Error running remote Marimo: ${error.message}`);
@@ -912,7 +913,7 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
                         // First, check if remote file is newer
                         const checkCommand = `ssh -i "${escapedKeyPath}" ${this.settings.marimoRemoteUser}@${this.settings.marimoRemoteHost} "stat -f %m ${remotePath}"`;
                         const remoteTimestamp = await new Promise<number>((resolve, reject) => {
-                            exec(checkCommand, (error: any, stdout: string) => {
+                            execCb(checkCommand, (error: any, stdout: string) => {
                                 if (error) {
                                     reject(error);
                                 } else {
@@ -921,13 +922,13 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
                             });
                         });
 
-                        const localStat = require('fs').statSync(localPath);
+                        const localStat = fs.statSync(localPath);
                         
                         if (remoteTimestamp > localStat.mtimeMs / 1000) {
                             // Remote is newer, copy from remote to local
                             const pullCommand = `scp -i "${escapedKeyPath}" ${this.settings.marimoRemoteUser}@${this.settings.marimoRemoteHost}:${remotePath} "${escapedLocalPath}"`;
                             await new Promise<void>((resolve, reject) => {
-                                exec(pullCommand, (error: any) => {
+                                execCb(pullCommand, (error: any) => {
                                     if (error) {
                                         reject(error);
                                     } else {
@@ -939,7 +940,7 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
                             // Local is newer or same, copy to remote
                             const pushCommand = `scp -i "${escapedKeyPath}" "${escapedLocalPath}" ${this.settings.marimoRemoteUser}@${this.settings.marimoRemoteHost}:${remotePath}`;
                             await new Promise<void>((resolve, reject) => {
-                                exec(pushCommand, (error: any) => {
+                                execCb(pushCommand, (error: any) => {
                                     if (error) {
                                         reject(error);
                                     } else {
@@ -1321,7 +1322,7 @@ class MMSSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }));
 
-        const marimoDesc = containerEl.createEl('p', { 
+        containerEl.createEl('p', {
             text: 'Available placeholders for Marimo commands:',
             cls: 'setting-item-description'
         });
@@ -1413,7 +1414,7 @@ class MMSSettingTab extends PluginSettingTab {
 
         containerEl.createEl('h3', { text: 'Ignore Patterns' });
         
-        const descEl = containerEl.createEl('p', { 
+        containerEl.createEl('p', {
             text: 'Specify patterns to ignore when building the graph. One pattern per line.'
         });
         

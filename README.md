@@ -1,16 +1,8 @@
-# Obsidian Sample Plugin
+# Maps, Masterplans & Searches (MMS)
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+MMS is an Obsidian plugin that builds a hierarchical file graph from note IDs and presents a browser-style view for navigating your vault. It supports creating follow-up notes, moving files while maintaining their Folgezettel IDs and launching Marimo notebooks for Python files.
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
-
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open Sample Modal" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+The project uses TypeScript and the Obsidian plugin API. See [ARCHITECTURE.md](ARCHITECTURE.md) for an overview of how the components fit together.
 
 ## First time developing plugins?
 

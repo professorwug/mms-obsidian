@@ -5,7 +5,6 @@ async function uploadImageToAnthropic(imageBase64) {
     for (let i = 0; i < binary.length; i++) {
       array[i] = binary.charCodeAt(i);
     }
-    const imageBlob = new Blob([array], { type: 'image/jpeg' });
   
     const apiKey = 'ANTHROPIC_API_KEY';
     const endpoint = 'https://api.anthropic.com/v1/messages';

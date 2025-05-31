@@ -1,5 +1,7 @@
 import { FileGraph } from './FileGraph';
 import { Platform, App, TFile } from 'obsidian';
+import * as path from 'path';
+import { exec as execCb } from 'child_process';
 
 /**
  * Checks if the plugin is running on a mobile device
@@ -31,19 +33,19 @@ export function isFeatureAvailable(feature: 'filesystem' | 'shell' | 'marimo' | 
  * @param app The Obsidian app instance
  * @returns A platform-appropriate path
  */
-export function getPlatformAppropriateFilePath(path: string, app: App): string {
+export function getPlatformAppropriateFilePath(filePath: string, app: App): string {
     if (isMobileApp()) {
         // On mobile, we can't use absolute paths with the file system
-        return path;
+        return filePath;
     } else {
         // On desktop, we can use the vault adapter to get the full path
         try {
             const basePath = (app.vault.adapter as any).basePath;
-            const fullPath = require('path').resolve(basePath, path);
+            const fullPath = path.resolve(basePath, filePath);
             return fullPath;
         } catch (e) {
             console.error('Error getting absolute path:', e);
-            return path;
+            return filePath;
         }
     }
 }
@@ -79,9 +81,8 @@ export async function executeCommand(
         // On desktop, execute the command
         try {
             // This is safe only on desktop
-            const { exec } = require('child_process');
             return new Promise((resolve, reject) => {
-                exec(command, (error: any) => {
+                execCb(command, (error: any) => {
                     if (error) {
                         console.error('Command execution error:', error);
                         reject(error);
@@ -206,7 +207,7 @@ export function getNextAvailableChildId(parentPath: string, graph: FileGraph): s
 export function getProblematicSymbols(): string {
     // List of characters that can cause problems on various operating systems
     // Note: @, &, and % are explicitly excluded as they're used by the plugin
-    return '*"\/\\<>:|?`#';
+    return '*"/\\<>:|?`#';
 }
 
 /**
