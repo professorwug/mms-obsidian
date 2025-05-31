@@ -763,6 +763,9 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         // Initial graph retrieval (only happens once during initialization)
         return (plugin as MMSPlugin).getActiveGraph();
     });
+
+    // Store keydown handler to remove it properly
+    const keydownHandlerRef = React.useRef<(e: KeyboardEvent) => void>();
     
     // Subscribe to graph updates
     React.useEffect(() => {
@@ -878,9 +881,11 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                 setDraggingPath(null);
                 setDragOverPath(null);
                 document.removeEventListener('keydown', handleKeyDown);
+                keydownHandlerRef.current = undefined;
                 new Notice('Drag cancelled.');
             }
         };
+        keydownHandlerRef.current = handleKeyDown;
         document.addEventListener('keydown', handleKeyDown);
     };
 
@@ -951,6 +956,10 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
             setIsDragging(false);
             setDraggingPath(null);
             setDragOverPath(null);
+            if (keydownHandlerRef.current) {
+                document.removeEventListener('keydown', keydownHandlerRef.current);
+                keydownHandlerRef.current = undefined;
+            }
         }
     };
 
@@ -1456,14 +1465,17 @@ export class FileBrowserView extends ItemView {
         this.currentGraph = graph;
     };
 
+    private graphUpdateHandler: ((graph: FileGraph) => void) | null = null;
+
     async onOpen() {
         const container = this.containerEl.children[1];
         container.empty();
-        
-        (this.plugin as MMSPlugin).subscribeToGraphUpdates((graph) => {
+
+        this.graphUpdateHandler = (graph) => {
             this.currentGraph = graph;
             this.refreshPreservingState();
-        });
+        };
+        (this.plugin as MMSPlugin).subscribeToGraphUpdates(this.graphUpdateHandler);
 
         const files = this.app.vault.getFiles();
         const folders = this.app.vault.getAllLoadedFiles()
@@ -1484,10 +1496,10 @@ export class FileBrowserView extends ItemView {
     }
 
     async onClose() {
-        (this.plugin as MMSPlugin).unsubscribeFromGraphUpdates((graph) => {
-            this.currentGraph = graph;
-            this.refreshPreservingState();
-        });
+        if (this.graphUpdateHandler) {
+            (this.plugin as MMSPlugin).unsubscribeFromGraphUpdates(this.graphUpdateHandler);
+            this.graphUpdateHandler = null;
+        }
 
         if (this.root) {
             this.root.unmount();
