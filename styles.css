@@ -228,9 +228,10 @@ If your plugin does not need CSS, delete this file.
     width: 12px !important;
     margin-right: 0 !important;
     margin-top: 0 !important;
-    position: absolute !important; 
+    position: absolute !important;
     left: 5px !important;
-    top: 8px !important;
+    top: 50% !important;
+    transform: translateY(-50%);
     height: auto !important;
 }
 
