@@ -1,4 +1,4 @@
-import { App, Modal, Setting, Notice, TFile } from 'obsidian';
+import { App, Modal, Setting, TFile } from 'obsidian';
 
 interface RenameSymbolsResult {
     targetSymbol: string;
@@ -9,8 +9,8 @@ export class RenameSymbolsModal extends Modal {
     private result: RenameSymbolsResult;
     private resolvePromise: (value: RenameSymbolsResult | null) => void;
     private problematicFiles: TFile[] = [];
-    private processedCount: number = 0;
-    private totalCount: number = 0;
+    private processedCount = 0;
+    private totalCount = 0;
     private statusEl: HTMLElement;
 
     constructor(app: App, problematicFiles: TFile[]) {
@@ -27,8 +27,8 @@ export class RenameSymbolsModal extends Modal {
         const { contentEl } = this;
         contentEl.createEl('h2', { text: 'Fix Special Characters in Filenames' });
 
-        const descEl = contentEl.createEl('p', { 
-            text: `Found ${this.totalCount} files with special characters that may cause problems on some operating systems.` 
+        contentEl.createEl('p', {
+            text: `Found ${this.totalCount} files with special characters that may cause problems on some operating systems.`
         });
 
         if (this.totalCount > 0) {

@@ -1,19 +1,6 @@
-import { App, SuggestModal, TFile, TFolder, TAbstractFile, FuzzyMatch } from 'obsidian';
-import { FileGraph, GraphNode } from './FileGraph';
+import { App, SuggestModal, TFolder, TAbstractFile } from 'obsidian';
+import { FileGraph } from './FileGraph';
 
-// Helper function to get the length of the common prefix between two strings
-// Make sure to compare case-insensitively
-function getCommonPrefixLength(a: string, b: string): number {
-    // Convert both strings to lowercase to ensure case-insensitive comparison
-    const aLower = a.toLowerCase();
-    const bLower = b.toLowerCase();
-    
-    const minLength = Math.min(aLower.length, bLower.length);
-    for (let i = 0; i < minLength; i++) {
-        if (aLower[i] !== bLower[i]) return i;
-    }
-    return minLength;
-}
 
 // Interface for search results with scores
 interface ScoredItem {

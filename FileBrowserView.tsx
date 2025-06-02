@@ -1,11 +1,13 @@
-import { ItemView, TFile, TFolder, WorkspaceLeaf, Menu, TAbstractFile, Notice, App } from 'obsidian';
+import { ItemView, TFile, TFolder, WorkspaceLeaf, Menu, Notice, App } from 'obsidian';
 import * as React from 'react';
 import { createRoot, Root } from 'react-dom/client';
-import { buildFileGraph, FileGraph, GraphNode, isValidNodeId, getParentId } from './FileGraph';
+import { FileGraph, GraphNode, getParentId } from './FileGraph';
 import MMSPlugin from './main';
 import { FolgemoveModal } from './FolgemoveModal';
 import { RenameModal } from './RenameModal';
-import { isMobileApp, getPlatformAppropriateFilePath, executeCommand, getNextAvailableChildId } from './utils';
+import { isMobileApp, getPlatformAppropriateFilePath, executeCommand } from './utils';
+import * as path from 'path';
+import { exec } from 'child_process';
 
 interface FileTypeCommands {
     [key: string]: string;
@@ -853,15 +855,6 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         return null;
     };
 
-    // Get siblings of a node (nodes that share the same parent)
-    const getSiblings = (path: string): string[] => {
-        const parentPath = findParentPath(path);
-        if (!parentPath) return [];
-        
-        return Array.from(graph.edges.get(parentPath) || [])
-            .filter(p => p !== path && p !== '/'); // Exclude self and root node
-    };
-
     // Handle the start of dragging
     const handleDragStart = (path: string) => {
         setIsDragging(true);
@@ -987,7 +980,7 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         // Prepare rename operations for each changed ID
         for (const [oldId, newId] of idChanges.entries()) {
             // Find the node(s) with this ID
-            for (const [nodePath, node] of graph.nodes.entries()) {
+            for (const [, node] of graph.nodes.entries()) {
                 if (node.id === oldId) {
                     // For each file in the node, prepare a rename
                     for (const path of node.paths) {
@@ -1046,7 +1039,7 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                 // For each ID change
                 for (const [oldId, newId] of idChanges.entries()) {
                     // Find all descendant IDs that start with the old parent ID
-                    for (const [nodePath, node] of updatedGraph.nodes.entries()) {
+                    for (const [, node] of updatedGraph.nodes.entries()) {
                         if (!node.id) continue;
                         
                         // Check if this is a descendant of the changed node
@@ -1197,19 +1190,19 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         return idMap;
     };
     
-    const handleFileClick = async (path: string) => {
+    const handleFileClick = async (filePath: string) => {
         // Skip if we're dragging
         if (isDragging) return;
         
-        console.log('File click handler called with path:', path);
-        const node = graph.nodes.get(path);
+        console.log('File click handler called with path:', filePath);
+        const node = graph.nodes.get(filePath);
         if (!node || node.isDirectory) {
             console.log('Invalid node or directory, ignoring click');
             return;
         }
 
         // Use the exact path that was passed in
-        const extension = path.split('.').pop()?.toLowerCase();
+        const extension = filePath.split('.').pop()?.toLowerCase();
         if (!extension) {
             console.log('No extension found');
             return;
@@ -1226,33 +1219,32 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         
         if (extension === 'md' || extension === 'pdf' || (!command && extension !== 'html')) {
             // Default behavior: open in Obsidian in a new tab
-            console.log('Opening in Obsidian:', path);
+            console.log('Opening in Obsidian:', filePath);
             
             // Mark that this file is being opened from the browser
             (plugin as MMSPlugin).setFileOpenSource('browser');
             
-            const file = app.vault.getAbstractFileByPath(path);
+            const file = app.vault.getAbstractFileByPath(filePath);
             if (file instanceof TFile) {
                 await app.workspace.getLeaf('tab').openFile(file);
             }
         } else if (extension === 'html') {
             // Handle HTML files according to settings
-            const file = app.vault.getAbstractFileByPath(path);
+            const file = app.vault.getAbstractFileByPath(filePath);
             if (!(file instanceof TFile)) {
-                console.error('File not found:', path);
+                console.error('File not found:', filePath);
                 return;
             }
 
             if (plugin.settings.htmlBehavior === 'obsidian' || isMobileApp()) {
                 // Open in Obsidian by simulating a link click
-                console.log('Opening HTML file in Obsidian via link:', path);
+                console.log('Opening HTML file in Obsidian via link:', filePath);
                 await app.workspace.openLinkText(file.path, '', true, { active: true });
             } else {
                 // Open in default browser (desktop only)
                 try {
                     const absolutePath = (app.vault.adapter as any).basePath;
-                    const filePath = require('path').resolve(absolutePath, file.path);
-                    const { exec } = require('child_process');
+                    const filePath = path.resolve(absolutePath, file.path);
                     exec(`open "${filePath}"`, (error: any) => {
                         if (error) {
                             console.error('Error opening HTML file:', error);
@@ -1268,9 +1260,9 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
             }
         } else if (command) {
             // Handle other file types with custom commands
-            const file = app.vault.getAbstractFileByPath(path);
+            const file = app.vault.getAbstractFileByPath(filePath);
             if (!(file instanceof TFile)) {
-                console.error('File not found:', path);
+                console.error('File not found:', filePath);
                 return;
             }
 
