@@ -1,6 +1,6 @@
 {
 	"id": "mms",
-	"name": "Maps, Masterplans & Searches",
+	"name": "Maps, Masterplans & Searches (MMS)",
 	"version": "0.1.8",
 	"minAppVersion": "1.4.0",
 	"description": "Browse your notes hierarchically based on folgezettel IDs, and code in a computational zettelkasten!",
