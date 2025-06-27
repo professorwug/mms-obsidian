@@ -905,12 +905,41 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
             return;
         }
         
+        // Validate that source and target nodes exist
+        const sourceNode = graph.nodes.get(sourcePath);
+        const targetNode = graph.nodes.get(targetPath);
+        
+        if (!sourceNode || !targetNode) {
+            new Notice('Error: Source or target node not found in graph.');
+            setIsDragging(false);
+            setDraggingPath(null);
+            setDragOverPath(null);
+            return;
+        }
+        
+        // Validate that both nodes have valid Folgezettel IDs
+        if (!sourceNode.id || !targetNode.id) {
+            new Notice('Reordering is only available for nodes with valid Folgezettel IDs.');
+            setIsDragging(false);
+            setDraggingPath(null);
+            setDragOverPath(null);
+            return;
+        }
+        
         // Ensure source and target have the same parent (siblings)
         const sourceParent = findParentPath(sourcePath);
         const targetParent = findParentPath(targetPath);
         
         if (!sourceParent || !targetParent || sourceParent !== targetParent) {
             new Notice('Drag and drop is only allowed between siblings.');
+            setIsDragging(false);
+            setDraggingPath(null);
+            setDragOverPath(null);
+            return;
+        }
+        
+        // Don't allow reordering if source and target are the same
+        if (sourcePath === targetPath) {
             setIsDragging(false);
             setDraggingPath(null);
             setDragOverPath(null);
@@ -941,14 +970,23 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                     return displayNameA.localeCompare(displayNameB);
                 });
             
-            // Create a new order by removing the source and inserting at target position
+            // Create a new order by inserting source at target position
             const newOrder = [...allSiblings];
             const sourceIndex = newOrder.indexOf(sourcePath);
-            newOrder.splice(sourceIndex, 1); // Remove source
-            
-            // Find the target index
             const targetIndex = newOrder.indexOf(targetPath);
-            newOrder.splice(targetIndex, 0, sourcePath); // Insert at target position
+            
+            if (sourceIndex === -1 || targetIndex === -1) {
+                throw new Error('Source or target path not found in siblings list');
+            }
+            
+            // Remove source from current position
+            newOrder.splice(sourceIndex, 1);
+            
+            // Calculate adjusted target index (account for removal if source was before target)
+            const adjustedTargetIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+            
+            // Insert source at the adjusted target position
+            newOrder.splice(adjustedTargetIndex, 0, sourcePath);
             
             // Now reorder the IDs
             await renameSiblingsInOrder(sourceParent, newOrder);
@@ -991,9 +1029,12 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         // Prepare batch of rename operations for direct siblings
         const directRenameOperations = [];
         
+        // Prepare batch of rename operations for ALL descendants (collect before any renames)
+        const childRenameOperations = [];
+        
         // Prepare rename operations for each changed ID
         for (const [oldId, newId] of idChanges.entries()) {
-            // Find the node(s) with this ID
+            // Find the node(s) with this ID (direct siblings)
             for (const [nodePath, node] of graph.nodes.entries()) {
                 if (node.id === oldId) {
                     // For each file in the node, prepare a rename
@@ -1009,17 +1050,61 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                     }
                 }
             }
+            
+            // Also collect ALL descendants of this node (before any renames happen)
+            for (const [nodePath, node] of graph.nodes.entries()) {
+                if (!node.id) continue;
+                
+                // Check if this is a descendant of the changed node
+                if (node.id !== oldId && node.id.startsWith(oldId)) {
+                    // Generate the new descendant ID by replacing the prefix
+                    const newDescendantId = node.id.replace(new RegExp(`^${oldId}`), newId);
+                    
+                    // For each file in the node, prepare a rename
+                    for (const path of node.paths) {
+                        const file = app.vault.getAbstractFileByPath(path);
+                        if (file instanceof TFile) {
+                            childRenameOperations.push({
+                                file,
+                                oldId: node.id,
+                                newId: newDescendantId
+                            });
+                        }
+                    }
+                }
+            }
         }
         
         // If there are no ID changes, we can exit early
         if (idChanges.size === 0) {
+            new Notice('No reordering needed - files are already in the correct order.');
             return;
         }
         
-        // Show initial notification
-        new Notice(`Reordering nodes and updating their children...`);
+        // Validate that all files still exist before starting (both parents and children)
+        const missingFiles = [];
+        const allRenameOperations = [...directRenameOperations, ...childRenameOperations];
         
-        // Execute all direct sibling renames first
+        for (const op of allRenameOperations) {
+            const file = app.vault.getAbstractFileByPath(op.file.path);
+            if (!file) {
+                missingFiles.push(op.file.path);
+            }
+        }
+        
+        if (missingFiles.length > 0) {
+            throw new Error(`Cannot proceed: ${missingFiles.length} files no longer exist: ${missingFiles.join(', ')}`);
+        }
+        
+        // Show initial notification
+        const totalOperations = directRenameOperations.length + childRenameOperations.length;
+        new Notice(`Reordering ${directRenameOperations.length} nodes and updating ${childRenameOperations.length} children (${totalOperations} total files)...`);
+        
+        // Track successful renames for potential rollback
+        const successfulRenames = [];
+        
+        // PHASE 1: Execute all direct sibling renames first
+        console.log('Phase 1: Renaming parent nodes...');
         for (const op of directRenameOperations) {
             // Get the file name without the ID
             const { file, oldId, newId } = op;
@@ -1033,75 +1118,52 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
             
             try {
                 await (plugin as MMSPlugin).renameFileWithExtensions(file, newName);
+                successfulRenames.push({ oldPath: file.path, newName, oldName });
+                console.log(`Renamed parent: ${oldName} → ${newName}`);
             } catch (error) {
                 console.error(`Failed to rename ${file.path}:`, error);
+                
+                // Try to rollback successful renames
+                new Notice(`Error during rename operation. Attempting to rollback...`);
+                for (const rollbackOp of successfulRenames.reverse()) {
+                    try {
+                        const fileToRollback = app.vault.getAbstractFileByPath(rollbackOp.oldPath.replace(rollbackOp.oldName, rollbackOp.newName));
+                        if (fileToRollback instanceof TFile) {
+                            await (plugin as MMSPlugin).renameFileWithExtensions(fileToRollback, rollbackOp.oldName);
+                        }
+                    } catch (rollbackError) {
+                        console.error(`Failed to rollback ${rollbackOp.oldPath}:`, rollbackError);
+                    }
+                }
+                
                 throw error; // Re-throw to be caught by the caller
             }
         }
         
-        // Now update the children of changed nodes
-        // This needs to wait a moment for the file system changes to propagate
-        // and the graph to update with the new parent IDs
-        setTimeout(async () => {
-            try {
-                // Get the updated graph
-                const updatedGraph = (plugin as MMSPlugin).getActiveGraph();
+        // PHASE 2: Execute all child renames
+        if (childRenameOperations.length > 0) {
+            console.log(`Phase 2: Renaming ${childRenameOperations.length} child nodes...`);
+            new Notice(`Phase 2: Updating ${childRenameOperations.length} child nodes...`);
+            
+            for (const op of childRenameOperations) {
+                const { file, oldId, newId } = op;
+                const oldName = file.basename;
+                const newName = oldName.replace(oldId, newId);
                 
-                // Collect all descendants that need renaming
-                const childRenameOperations = [];
+                if (oldName === newName) continue;
                 
-                // For each ID change
-                for (const [oldId, newId] of idChanges.entries()) {
-                    // Find all descendant IDs that start with the old parent ID
-                    for (const [nodePath, node] of updatedGraph.nodes.entries()) {
-                        if (!node.id) continue;
-                        
-                        // Check if this is a descendant of the changed node
-                        if (node.id !== oldId && node.id.startsWith(oldId)) {
-                            // Generate the new descendant ID by replacing the prefix
-                            const newDescendantId = node.id.replace(new RegExp(`^${oldId}`), newId);
-                            
-                            // For each file in the node, prepare a rename
-                            for (const path of node.paths) {
-                                const file = app.vault.getAbstractFileByPath(path);
-                                if (file instanceof TFile) {
-                                    childRenameOperations.push({
-                                        file,
-                                        oldId: node.id,
-                                        newId: newDescendantId
-                                    });
-                                }
-                            }
-                        }
-                    }
+                try {
+                    await (plugin as MMSPlugin).renameFileWithExtensions(file, newName);
+                    console.log(`Renamed child: ${oldName} → ${newName}`);
+                } catch (error) {
+                    console.error(`Failed to rename child ${file.path}:`, error);
+                    // Continue with other child renames even if one fails
+                    new Notice(`Warning: Failed to rename child file ${file.path}`);
                 }
-                
-                // Execute all child renames
-                if (childRenameOperations.length > 0) {
-                    new Notice(`Updating ${childRenameOperations.length} child nodes...`);
-                    
-                    for (const op of childRenameOperations) {
-                        const { file, oldId, newId } = op;
-                        const oldName = file.basename;
-                        const newName = oldName.replace(oldId, newId);
-                        
-                        if (oldName === newName) continue;
-                        
-                        try {
-                            await (plugin as MMSPlugin).renameFileWithExtensions(file, newName);
-                        } catch (error) {
-                            console.error(`Failed to rename child ${file.path}:`, error);
-                            // Continue with other renames even if one fails
-                        }
-                    }
-                    
-                    new Notice(`Successfully updated ${childRenameOperations.length} child nodes`);
-                }
-            } catch (error) {
-                console.error('Error updating children:', error);
-                new Notice(`Error updating children: ${error.message || 'Unknown error'}`);
             }
-        }, 1000); // Wait 1 second for the graph to update
+            
+            new Notice(`Successfully updated ${childRenameOperations.length} child nodes`);
+        }
     };
     
     // Generate sibling IDs following the correct Folgezettel pattern
@@ -1117,36 +1179,23 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         // Map to store old ID -> new ID
         const idMap = new Map<string, string>();
         
-        // Analyze the structure of the original IDs to determine the pattern we should follow
-        const originalIDs = [];
-        for (const siblingPath of orderedSiblings) {
-            const node = graph.nodes.get(siblingPath);
-            if (node?.id) {
-                // Remove any special suffix for pattern analysis
-                originalIDs.push(node.id.replace(/[*&!@$%^#_-]$/, ''));
-            }
-        }
+        // Determine the child ID pattern based on parent ID
+        // The Folgezettel system alternates between letters and numbers at each level
+        const cleanParentId = parentId.replace(/[*&!@$%^#_-]$/, '');
         
-        // Find the last segment common to all IDs
-        // This helps identify if we're dealing with level 1 nodes (e.g., 01, 02, 03)
-        // or deeper level nodes (e.g., 01a01, 01a02, 01a03)
-        let isFirstLevel = false;
-        if (originalIDs.length > 0) {
-            // If all original IDs are simple 2-digit numbers, we're at the first level
-            const allFirstLevel = originalIDs.every(id => /^\d{2}$/.test(id));
-            if (allFirstLevel) {
-                isFirstLevel = true;
-            } else {
-                // Check if all IDs share the same parent
-                const parentSegment = getParentId(originalIDs[0]);
-                const allSameParent = originalIDs.every(id => getParentId(id) === parentSegment);
-                if (allSameParent) {
-                    isFirstLevel = false;
-                } else {
-                    // Default to treating as first level
-                    isFirstLevel = true;
-                }
-            }
+        // Determine what type of children this parent should have
+        let useLetters = false;
+        if (cleanParentId.length === 0) {
+            // Root level: children should be numbers (01, 02, 03...)
+            useLetters = false;
+        } else if (cleanParentId.length === 2 && /^\d{2}$/.test(cleanParentId)) {
+            // Parent is level 1 (e.g., "01"): children should be letters (01a, 01b, 01c...)
+            useLetters = true;
+        } else {
+            // For deeper levels, check if parent ends with letter or number
+            const parentEndsWithLetter = /[a-zA-Z]$/.test(cleanParentId);
+            // If parent ends with letter, children use numbers; if ends with number, children use letters
+            useLetters = !parentEndsWithLetter;
         }
         
         // Generate new IDs for each sibling
@@ -1159,40 +1208,16 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
             const oldId = siblingNode.id;
             const specialSuffix = oldId.match(/[*&!@$%^#_-]$/)?.[0] || '';
             
-            // Extract the core ID (without special suffix)
-            const baseOldId = oldId.replace(/[*&!@$%^#_-]$/, '');
-            
             let newId: string;
             
-            if (isFirstLevel) {
-                // First level nodes are always two-digit numbers: 01, 02, 03...
-                newId = (i + 1).toString().padStart(2, '0') + specialSuffix;
+            if (useLetters) {
+                // Generate letter-based ID (a, b, c, ... z, aa, ab, ac...)
+                const letter = generateLetterSequence(i);
+                newId = cleanParentId + letter + specialSuffix;
             } else {
-                // Get the parent segment of the ID
-                const parentSegment = getParentId(baseOldId);
-                if (!parentSegment) {
-                    // If we can't determine parent, skip this node
-                    continue;
-                }
-                
-                // Determine whether parent ends with letter or number for alternating pattern
-                const parentEndsWithLetter = /[a-zA-Z]$/.test(parentSegment);
-                
-                if (parentEndsWithLetter) {
-                    // Parent ends with letter, children use numbers
-                    // Format: 01a01, 01a02, etc.
-                    const num = (i + 1).toString().padStart(2, '0');
-                    newId = parentSegment + num + specialSuffix;
-                } else {
-                    // Parent ends with number, children use letters
-                    // Format: 01a, 01b, etc.
-                    const letterCode = 'a'.charCodeAt(0) + i;
-                    // Handle overflow (after 'z')
-                    const letter = letterCode <= 122 ? 
-                        String.fromCharCode(letterCode) : 
-                        `a${String.fromCharCode(96 + ((letterCode - 96) % 26))}`;
-                    newId = parentSegment + letter + specialSuffix;
-                }
+                // Generate number-based ID (01, 02, 03...)
+                const num = (i + 1).toString().padStart(2, '0');
+                newId = cleanParentId + num + specialSuffix;
             }
             
             // Store the mapping if ID has changed
@@ -1202,6 +1227,19 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         }
         
         return idMap;
+    };
+    
+    // Helper function to generate letter sequences (a, b, c, ... z, aa, ab, ac...)
+    const generateLetterSequence = (index: number): string => {
+        let result = '';
+        let num = index;
+        
+        do {
+            result = String.fromCharCode(97 + (num % 26)) + result; // 97 is 'a'
+            num = Math.floor(num / 26);
+        } while (num > 0);
+        
+        return result;
     };
     
     const handleFileClick = async (path: string) => {
@@ -1332,6 +1370,17 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
             tabIndex={0}
             onClick={handleContainerClick}
         >
+            {/* Drag mode indicator banner */}
+            {isDragging && (
+                <div className="drag-mode-banner">
+                    <div className="drag-mode-icon">🚧</div>
+                    <div className="drag-mode-text">
+                        <strong>Drag to reorder</strong>
+                        <span className="drag-mode-hint">(Esc to cancel)</span>
+                    </div>
+                </div>
+            )}
+            
             <div 
                 className="file-list"
                 onClick={(e) => {
