@@ -31,6 +31,7 @@ interface MMSPluginSettings {
     marimoRemoteVaultPath: string;
     ignorePatterns: string[];
     autoRevealFiles: boolean;
+    folgezettelBrowserFontSize: number;
 }
 
 const DEFAULT_SETTINGS: MMSPluginSettings = {
@@ -57,7 +58,8 @@ const DEFAULT_SETTINGS: MMSPluginSettings = {
         '.git',         // Git directory
         '.obsidian'     // Obsidian settings directory
     ],
-    autoRevealFiles: false
+    autoRevealFiles: false,
+    folgezettelBrowserFontSize: 14
 }
 
 function generateRandomPort(): number {
@@ -455,10 +457,17 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
     async loadSettings() {
         this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
         console.log('Loaded settings:', this.settings);
+        // Apply font size setting
+        this.updateFolgezettelBrowserFontSize();
     }
 
     async saveSettings() {
         await this.saveData(this.settings);
+    }
+
+    updateFolgezettelBrowserFontSize() {
+        // Update CSS custom property for all Folgezettel Browser views
+        document.documentElement.style.setProperty('--mms-browser-font-size', `${this.settings.folgezettelBrowserFontSize}px`);
     }
 
     async activateView() {
@@ -1577,6 +1586,20 @@ class MMSSettingTab extends PluginSettingTab {
                 .onChange(async (value) => {
                     this.plugin.settings.autoRevealFiles = value;
                     await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('Font size')
+            .setDesc('Font size for items in the Folgezettel Browser (in pixels)')
+            .addSlider(slider => slider
+                .setLimits(10, 20, 1)
+                .setValue(this.plugin.settings.folgezettelBrowserFontSize)
+                .setDynamicTooltip()
+                .onChange(async (value) => {
+                    this.plugin.settings.folgezettelBrowserFontSize = value;
+                    await this.plugin.saveSettings();
+                    // Update CSS custom property for all browser views
+                    this.plugin.updateFolgezettelBrowserFontSize();
                 }));
     }
 }
