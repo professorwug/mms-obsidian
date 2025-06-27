@@ -400,6 +400,25 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             }
         });
 
+        // Add Copy all descendants as context command
+        this.addCommand({
+            id: 'copy-descendants-as-context',
+            name: 'Copy all descendants as context',
+            checkCallback: (checking: boolean) => {
+                const activeFile = this.app.workspace.getActiveFile();
+                if (!activeFile) return false;
+                
+                const graph = this.getActiveGraph();
+                const node = graph.nodes.get(activeFile.path);
+                if (!node || !node.id) return false;
+                
+                if (checking) return true;
+                
+                this.copyDescendantsAsContext(activeFile);
+                return true;
+            }
+        });
+
         // This adds a settings tab so the user can configure various aspects of the plugin
         this.addSettingTab(new MMSSettingTab(this.app, this));
 
@@ -749,6 +768,106 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             console.error('Error creating follow up note:', error);
             new Notice(`Error creating follow up note: ${error.message}`);
         }
+    }
+
+    async copyDescendantsAsContext(activeFile: TFile) {
+        try {
+            const graph = this.getActiveGraph();
+            const node = graph.nodes.get(activeFile.path);
+            
+            if (!node || !node.id) {
+                new Notice('File must have a valid Folgezettel ID');
+                return;
+            }
+
+            // Build the markdown content
+            const content = await this.buildDescendantMarkdown(activeFile.path, 1);
+            
+            // Copy to clipboard
+            await navigator.clipboard.writeText(content);
+            
+            new Notice('Descendants copied to clipboard');
+        } catch (error) {
+            console.error('Error copying descendants to clipboard:', error);
+            new Notice(`Error copying to clipboard: ${error.message}`);
+        }
+    }
+
+    private async buildDescendantMarkdown(path: string, depth: number): Promise<string> {
+        const graph = this.getActiveGraph();
+        const node = graph.nodes.get(path);
+        
+        if (!node) {
+            return '';
+        }
+
+        let markdown = '';
+        
+        // Create heading based on depth (max 6 levels)
+        const headingLevel = Math.min(depth, 6);
+        const heading = '#'.repeat(headingLevel);
+        
+        // Build the heading with ID and name
+        const headingText = node.id ? 
+            `${node.id}${node.name ? ' ' + node.name : ''}` : 
+            (node.name || path.split('/').pop() || 'Unnamed');
+        
+        markdown += `${heading} ${headingText}\n`;
+        
+        // Add file content if not a surrogate node
+        if (!node.isSurrogate && node.paths && node.paths.size > 0) {
+            try {
+                // Prefer .md file if available
+                let filePath: string | undefined;
+                if (node.extensions.has('md')) {
+                    filePath = Array.from(node.paths).find(p => p.endsWith('.md'));
+                }
+                if (!filePath) {
+                    filePath = Array.from(node.paths)[0];
+                }
+                
+                if (filePath) {
+                    const file = this.app.vault.getAbstractFileByPath(filePath);
+                    if (file instanceof TFile) {
+                        const content = await this.app.vault.read(file);
+                        markdown += content + '\n\n';
+                    }
+                }
+            } catch (error) {
+                console.error(`Error reading file ${path}:`, error);
+                markdown += '[Error reading file content]\n\n';
+            }
+        } else if (node.isSurrogate) {
+            markdown += '[Surrogate node - no content]\n\n';
+        }
+        
+        // Process children recursively
+        const children = graph.edges.get(path);
+        if (children && children.size > 0) {
+            // Sort children by their ID for consistent ordering
+            const sortedChildren = Array.from(children).sort((a, b) => {
+                const nodeA = graph.nodes.get(a);
+                const nodeB = graph.nodes.get(b);
+                if (!nodeA || !nodeB) return 0;
+                
+                // Sort by ID if available
+                if (nodeA.id && nodeB.id) {
+                    return nodeA.id.localeCompare(nodeB.id);
+                }
+                
+                // Fall back to path
+                return a.localeCompare(b);
+            });
+            
+            for (const childPath of sortedChildren) {
+                if (childPath !== '/') { // Skip root node
+                    const childMarkdown = await this.buildDescendantMarkdown(childPath, depth + 1);
+                    markdown += childMarkdown;
+                }
+            }
+        }
+        
+        return markdown;
     }
 
     async openMarimoNotebook(file: TFile): Promise<void> {
