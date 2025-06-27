@@ -86,9 +86,9 @@ If your plugin does not need CSS, delete this file.
     display: flex;
     align-items: flex-start; /* Align to top to accommodate multi-line text */
     min-width: 0;
-    gap: 6px;
+    gap: 4px; /* Reduced from 6px to reduce margin between file names and extensions */
     flex: 1;
-    padding-right: 16px;
+    padding-right: 0; /* Removed padding-right to eliminate space reserved for scrollbar */
     flex-wrap: wrap; /* Allow content to wrap */
 }
 
@@ -116,11 +116,12 @@ If your plugin does not need CSS, delete this file.
 
 .file-extensions {
     display: flex;
-    gap: 4px;
+    flex-direction: column; /* Stack extensions vertically */
+    gap: 2px; /* Smaller gap for vertical stacking */
     align-items: flex-start; /* Align with the top of text */
     flex-shrink: 0;
-    min-width: 60px;
-    justify-content: flex-end;
+    min-width: 0; /* Remove min-width constraint */
+    justify-content: flex-start; /* Start from top when stacking */
     align-self: flex-start; /* Align to the top of the container */
     margin-top: 2px; /* Slight top margin to align with text */
 }
