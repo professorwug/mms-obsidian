@@ -85,7 +85,7 @@ interface MarimoInstance {
 interface IMMSPlugin {
     settings: MMSPluginSettings;
     app: App;
-    createFollowUpNote: (file: TFile) => void;
+    createFollowUpNote: (item: TAbstractFile) => void;
     folgemove: (file: TFile, targetPath: string) => void;
     openMarimoNotebook: (file: TFile) => void;
     openRemoteMarimoNotebook: (file: TFile, node: GraphNode) => void;
@@ -711,15 +711,15 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         }
     }
 
-    async createFollowUpNote(activeFile: TFile) {
+    async createFollowUpNote(item: TAbstractFile) {
         try {
             const graph = this.getActiveGraph();
 
             // Get parent node from graph
-            const parentPath = activeFile.path;
+            const parentPath = item.path;
             const parentNode = graph.nodes.get(parentPath);
             if (!parentNode || !parentNode.id) {
-                new Notice('Parent note must have an ID');
+                new Notice('Parent must have a valid Folgezettel ID');
                 return;
             }
 
@@ -747,7 +747,9 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             const newFileName = `${newId} ${result.name}${extension}`;
 
             // Get parent folder path
-            const parentFolder = activeFile.parent?.path || '';
+            // If item is a folder, create the file inside it
+            // If item is a file, create the file in the same directory
+            const parentFolder = item instanceof TFolder ? item.path : (item.parent?.path || '');
             const newFilePath = parentFolder ? `${parentFolder}/${newFileName}` : newFileName;
 
             // Create file with appropriate initial content

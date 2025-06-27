@@ -24,7 +24,7 @@ interface MMSPluginSettings {
 interface IMMSPlugin {
     settings: MMSPluginSettings;
     app: App;
-    createFollowUpNote: (file: TFile) => void;
+    createFollowUpNote: (item: TAbstractFile) => void;
     folgemove: (file: TFile, targetPath: string) => void;
     openMarimoNotebook: (file: TFile) => void;
     openRemoteMarimoNotebook: (file: TFile, node: GraphNode) => void;
@@ -394,18 +394,18 @@ const FileItem: React.FC<FileItemProps> = ({
                 console.error('Error selecting node:', error);
             }
 
-        // Add "Create Follow-up Note" option if it's a file
-        if (!node.isDirectory) {
+        // Add "Create Follow-up Note" option if it's a file or a folder with an ID
+        if (!node.isDirectory || (node.isDirectory && node.id)) {
             try {
-                const file = app.vault.getAbstractFileByPath(path);
-                if (file instanceof TFile) {
+                const abstractFile = app.vault.getAbstractFileByPath(path);
+                if (abstractFile && (abstractFile instanceof TFile || (abstractFile instanceof TFolder && node.id))) {
                     menu.addItem((item) => {
                         item
                             .setTitle("Create Follow-up Note")
                             .setIcon("file-plus")
                             .onClick(() => {
                                 try {
-                                    plugin.createFollowUpNote(file);
+                                    plugin.createFollowUpNote(abstractFile);
                                 } catch (error) {
                                     console.error('Error creating follow-up note:', error);
                                     new Notice(`Error creating follow-up note: ${error.message || 'Unknown error'}`);
@@ -413,30 +413,33 @@ const FileItem: React.FC<FileItemProps> = ({
                             });
                     });
 
-                    menu.addItem((item) => {
-                        item
-                            .setTitle("Rename with Extensions")
-                            .setIcon("pencil")
-                            .onClick(() => {
-                                try {
-                                    const modal = new RenameModal(app, file, async (newName: string) => {
-                                        try {
-                                            await plugin.renameFileWithExtensions(file, newName);
-                                        } catch (error) {
-                                            console.error('Error renaming file:', error);
-                                            new Notice(`Error renaming file: ${error.message || 'Unknown error'}`);
-                                        }
-                                    });
-                                    modal.open();
-                                } catch (error) {
-                                    console.error('Error opening rename modal:', error);
-                                    new Notice(`Error opening rename modal: ${error.message || 'Unknown error'}`);
-                                }
-                            });
-                    });
+                    // Only add rename with extensions for files, not folders
+                    if (abstractFile instanceof TFile) {
+                        menu.addItem((item) => {
+                            item
+                                .setTitle("Rename with Extensions")
+                                .setIcon("pencil")
+                                .onClick(() => {
+                                    try {
+                                        const modal = new RenameModal(app, abstractFile, async (newName: string) => {
+                                            try {
+                                                await plugin.renameFileWithExtensions(abstractFile, newName);
+                                            } catch (error) {
+                                                console.error('Error renaming file:', error);
+                                                new Notice(`Error renaming file: ${error.message || 'Unknown error'}`);
+                                            }
+                                        });
+                                        modal.open();
+                                    } catch (error) {
+                                        console.error('Error opening rename modal:', error);
+                                        new Notice(`Error opening rename modal: ${error.message || 'Unknown error'}`);
+                                    }
+                                });
+                        });
+                    }
 
                     // Add Python-specific options if it's a Python file
-                    if (path.endsWith('.py')) {
+                    if (abstractFile instanceof TFile && path.endsWith('.py')) {
                         menu.addSeparator();
 
                         if (plugin.settings.useMarimo) {
@@ -447,7 +450,7 @@ const FileItem: React.FC<FileItemProps> = ({
                                     .setIcon("code")
                                     .onClick(async () => {
                                         try {
-                                            await plugin.openMarimoNotebook(file);
+                                            await plugin.openMarimoNotebook(abstractFile);
                                         } catch (error) {
                                             console.error('Error opening Marimo notebook:', error);
                                             new Notice(`Error opening Marimo notebook: ${error.message || 'Unknown error'}`);
@@ -464,7 +467,7 @@ const FileItem: React.FC<FileItemProps> = ({
                                     .setIcon("edit")
                                     .onClick(async () => {
                                         try {
-                                            await plugin.executeDefaultPythonCommand(file);
+                                            await plugin.executeDefaultPythonCommand(abstractFile);
                                         } catch (error) {
                                             console.error('Error executing Python command:', error);
                                             new Notice(`Error executing Python command: ${error.message || 'Unknown error'}`);
@@ -481,7 +484,7 @@ const FileItem: React.FC<FileItemProps> = ({
                                     .setIcon("globe")
                                     .onClick(async () => {
                                         try {
-                                            await plugin.openRemoteMarimoNotebook(file, node);
+                                            await plugin.openRemoteMarimoNotebook(abstractFile, node);
                                         } catch (error) {
                                             console.error('Error opening remote Marimo notebook:', error);
                                             new Notice(`Error opening remote Marimo notebook: ${error.message || 'Unknown error'}`);
