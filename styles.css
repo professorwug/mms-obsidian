@@ -54,13 +54,13 @@ If your plugin does not need CSS, delete this file.
     background-color: var(--background-modifier-hover);
 }
 
-.file-item-content.is-selected {
+.file-item-content.is-selected .file-name {
     text-decoration: underline;
     text-decoration-thickness: 1px;
     text-underline-offset: 3px;
 }
 
-.file-browser-container:focus .file-item-content.is-selected {
+.file-browser-container:focus .file-item-content.is-selected .file-name {
     text-decoration: underline;
     text-decoration-thickness: 1px;
     text-underline-offset: 3px;
@@ -73,14 +73,44 @@ If your plugin does not need CSS, delete this file.
 
 .file-item .collapse-icon {
     margin-right: 6px;
-    font-size: 10px;
-    width: 12px;
+    font-size: 12px; /* Increased from 8px */
+    width: 12px; /* Increased from 8px */
     flex-shrink: 0;
     display: inline-block;
     color: var(--text-muted);
     align-self: flex-start; /* Align to the top */
-    margin-top: 5px; /* Align with the first line of text */
+    margin-top: 3px; /* Adjusted to center with text */
+    transition: transform 0.15s ease;
+    font-weight: bold;
+    line-height: 1;
+    transform-origin: center; /* Ensure rotation happens around center */
 }
+
+.file-item .collapse-icon.expanded {
+    transform: rotate(90deg);
+    margin-top: 2px; /* Adjust position when rotated to keep centered */
+}
+
+/* Hierarchy lines using children container approach */
+.file-item-children {
+    position: relative;
+    /* Remove opacity from here to prevent greying out children */
+}
+
+/* Add the vertical line using a pseudo-element positioned under the caret */
+.file-item-children::before {
+    content: '';
+    position: absolute;
+    left: calc(var(--parent-caret-position, 9px) - 1px); /* Position under parent caret */
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background-color: var(--background-modifier-border);
+    opacity: 0.5;
+}
+
+/* Remove horizontal connectors - they were causing unwanted lines */
+/* .file-item-children .file-item::after removed */
 
 .file-name-container {
     display: flex;
@@ -225,7 +255,7 @@ If your plugin does not need CSS, delete this file.
 }
 
 .mobile-view .file-item-content .collapse-icon {
-    font-size: 10px !important;
+    font-size: 12px !important;
     width: 12px !important;
     margin-right: 0 !important;
     margin-top: 0 !important;
@@ -234,6 +264,13 @@ If your plugin does not need CSS, delete this file.
     top: 50% !important;
     transform: translateY(-50%);
     height: auto !important;
+    font-weight: bold !important;
+    transition: transform 0.15s ease !important;
+}
+
+.mobile-view .file-item-content .collapse-icon.expanded {
+    transform: translateY(-50%) rotate(90deg) !important;
+    /* Mobile positioning is handled by the transform above */
 }
 
 /* Minimize padding to save space */

@@ -608,7 +608,8 @@ const FileItem: React.FC<FileItemProps> = ({
     return (
         <>
             <div 
-                className={`file-item ${hasChildren ? 'has-children' : ''} ${node.isDirectory ? 'is-folder' : ''} ${isDraggingThis ? 'is-dragging' : ''} ${isDropTarget ? 'is-drop-target' : ''} ${isSelected ? 'selected' : ''}`}
+                className={`file-item depth-${depth} ${hasChildren ? 'has-children' : ''} ${hasChildren && expanded ? 'has-expanded-children' : ''} ${node.isDirectory ? 'is-folder' : ''} ${isDraggingThis ? 'is-dragging' : ''} ${isDropTarget ? 'is-drop-target' : ''} ${isSelected ? 'selected' : ''}`}
+                style={depth > 0 ? { '--parent-indent': `${(depth - 1) * indentSize}px` } as React.CSSProperties : undefined}
                 draggable={true}
                 onDragOver={handleDragOver}
                 onDragEnter={handleDragEnter}
@@ -638,7 +639,7 @@ const FileItem: React.FC<FileItemProps> = ({
                 >
                     {hasChildren && (
                         <span className={`collapse-icon ${expanded ? 'expanded' : ''}`}>
-                            {expanded ? '▼' : '▶'}
+                            ›
                         </span>
                     )}
                     <div className="file-name-container">
@@ -673,7 +674,10 @@ const FileItem: React.FC<FileItemProps> = ({
                 </div>
             </div>
             {expanded && hasChildren && !isDraggingThis && (
-                <div className="file-item-children">
+                <div 
+                    className="file-item-children"
+                    style={{ '--parent-caret-position': `${depth * indentSize + 9}px` } as React.CSSProperties}
+                >
                     {Array.from(graph.edges.get(path) || [])
                         .filter(childPath => childPath !== '/') // Filter out the root node
                         .sort((a, b) => {
