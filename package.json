@@ -1,10 +1,10 @@
 {
-  "name": "obsidian-folgezettel-browser",
+  "name": "mms-obsidian",
   "version": "1.0.0",
   "description": "A hierarchical file browser based on folgezettel IDs",
   "main": "main.js",
   "scripts": {
-    "dev": "node esbuild.config.mjs",
+    "dev": "node esbuild.config.mjs --outdir='/mnt/c/Users/kinca/Wherewithal/24-MMS/obsidian-test-vault/.obsidian/plugins/mms-obsidian' --watch",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "version": "node version-bump.mjs && git add manifest.json versions.json"
   },

@@ -48,6 +48,8 @@ The pattern continues with **strict alternation** between adding:
 This naming system creates a clearly readable, sortable hierarchy where each ID encodes its complete ancestry while maintaining a consistent pattern at each level.
 
 ## Build Commands
+
+
 - `npm run dev` - Development build with watch mode
 - `npm run build` - Production build with type checking
 - `npm run version` - Bump version and update manifest
