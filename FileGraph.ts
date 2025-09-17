@@ -263,8 +263,6 @@ export function buildFileGraph(items: Array<TFile | TFolder>, app: App): FileGra
     // Get plugin instance and settings
     const plugin = (app as any).plugins.getPlugin('mms');
     const ignorePatterns = plugin?.settings?.ignorePatterns || [];
-    console.log('Building graph with ignore patterns:', ignorePatterns);
-
     const graph: FileGraph = {
         nodes: new Map(),
         edges: new Map()
@@ -359,8 +357,6 @@ export function buildFileGraph(items: Array<TFile | TFolder>, app: App): FileGra
             item.parent ? item.parent.path : '/'
         );
     }
-
-    console.log(`Filtered ${ignoredCount} items based on ignore patterns`);
 
     return graph;
 }

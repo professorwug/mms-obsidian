@@ -1,4 +1,4 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, TFile, TFolder, TAbstractFile } from 'obsidian';
+import { App, Modal, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, TFile, TFolder, TAbstractFile } from 'obsidian';
 import { FileBrowserView } from './FileBrowserView';
 import { FolgemoveModal } from './FolgemoveModal';
 import { FollowUpModal } from './FollowUpModal';
@@ -180,7 +180,6 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
                     this.fileOpenSource !== 'browser';
                 
                 if (shouldAutoReveal) {
-                    console.log(`[MMS] Auto-revealing file: ${file.path}`);
                     // Slight delay to ensure everything is loaded
                     setTimeout(() => {
                         this.revealFileInFolgezettelBrowser(file);
@@ -198,55 +197,6 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         // Automatically open the file browser view
         this.app.workspace.onLayoutReady(() => {
             this.activateView();
-        });
-
-        // This creates an icon in the left ribbon.
-        const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-            // Called when the user clicks the icon.
-            new Notice('This is a notice!');
-        });
-        // Perform additional things with the ribbon
-        ribbonIconEl.addClass('my-plugin-ribbon-class');
-
-        // This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-        const statusBarItemEl = this.addStatusBarItem();
-        statusBarItemEl.setText('Status Bar Text');
-
-        // This adds a simple command that can be triggered anywhere
-        this.addCommand({
-            id: 'open-sample-modal-simple',
-            name: 'Open sample modal (simple)',
-            callback: () => {
-                new SampleModal(this.app).open();
-            }
-        });
-        // This adds an editor command that can perform some operation on the current editor instance
-        this.addCommand({
-            id: 'sample-editor-command',
-            name: 'Sample editor command',
-            editorCallback: (editor: Editor, view: MarkdownView) => {
-                console.log(editor.getSelection());
-                editor.replaceSelection('Sample Editor Command');
-            }
-        });
-        // This adds a complex command that can check whether the current state of the app allows execution of the command
-        this.addCommand({
-            id: 'open-sample-modal-complex',
-            name: 'Open sample modal (complex)',
-            checkCallback: (checking: boolean) => {
-                // Conditions to check
-                const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-                if (markdownView) {
-                    // If checking is true, we're simply "checking" if the command can be run.
-                    // If checking is false, then we want to actually perform the operation.
-                    if (!checking) {
-                        new SampleModal(this.app).open();
-                    }
-
-                    // This command will only show up in Command Palette when the check function returns true
-                    return true;
-                }
-            }
         });
 
         // Add Folgemove command
@@ -424,26 +374,16 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         // This adds a settings tab so the user can configure various aspects of the plugin
         this.addSettingTab(new MMSSettingTab(this.app, this));
 
-        // If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-        // Using this function will automatically remove the event listener when this plugin is disabled.
-        this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-            console.log('click', evt);
-        });
-
-        // When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-        this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
     }
 
     onunload() {
         // Clean up views
-        console.log(`[MMS] Cleaning up ${this.views.length} Folgezettel Browser views`);
-        
+
         // Make a copy of the views array since we'll be modifying it during iteration
         const viewsToClean = [...this.views];
-        
+
         for (const view of viewsToClean) {
             if (view && view.leaf) {
-                console.log('[MMS] Detaching view:', view.getDisplayText());
                 view.leaf.detach();
             }
         }
@@ -456,7 +396,6 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
 
     async loadSettings() {
         this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-        console.log('Loaded settings:', this.settings);
         // Apply font size setting
         this.updateFolgezettelBrowserFontSize();
     }
@@ -478,7 +417,6 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         
         // If there are multiple leaves, keep only the first one and detach others
         if (existingLeaves.length > 1) {
-            console.log(`[MMS] Found ${existingLeaves.length} Folgezettel Browser views, cleaning up duplicates`);
             // Keep the first leaf and detach others
             for (let i = 1; i < existingLeaves.length; i++) {
                 existingLeaves[i].detach();
@@ -488,7 +426,6 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         // Now get the leaf (either the single existing one, or the first one we kept)
         let leaf = workspace.getLeavesOfType('folgezettel-browser')[0];
         if (!leaf) {
-            console.log('[MMS] No Folgezettel Browser view found, creating new one');
             const newLeaf = workspace.getLeftLeaf(false);
             if (!newLeaf) {
                 throw new Error('Could not create leaf for folgezettel-browser');
@@ -564,7 +501,6 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
 
     async folgemove(source: TAbstractFile, targetPath: string) {
         try {
-            console.log(`[Folgemove] Starting move of ${source.path} to ${targetPath}`);
             const graph = this.getActiveGraph();
 
             // Get target node
@@ -574,30 +510,23 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             }
 
             // Get all children BEFORE moving the source node
-            console.log(`[Folgemove] Getting children before moving source`);
             const children = this.getChildrenToMove(source.path);
-            console.log(`[Folgemove] Found ${children.length} children to move:`, children.map(c => c.path));
 
             // Move the source node and get its new path
-            console.log(`[Folgemove] Moving source node ${source.path}`);
             const newPath = await this.moveSingleNode(source, targetPath);
             if (!newPath) {
                 throw new Error('Failed to move source node');
             }
-            console.log(`[Folgemove] Source node moved to ${newPath}`);
-            
+
             // Wait for graph to update after moving source
-            console.log(`[Folgemove] Waiting for graph update after source move`);
             try {
                 await this.waitForGraphUpdate();
-                console.log(`[Folgemove] Graph updated after source move`);
             } catch (error) {
                 console.warn(`[Folgemove] Warning: ${error.message}`);
             }
-            
+
             // Move children recursively
             if (children.length > 0) {
-                console.log(`[Folgemove] Starting recursive move of children to ${newPath}`);
                 await this.moveChildrenRecursively(children, newPath);
             }
 
@@ -609,7 +538,6 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
 
     private async moveSingleNode(source: TAbstractFile, targetPath: string): Promise<string | null> {
         try {
-            console.log(`[MoveSingle] Moving ${source.path} under ${targetPath}`);
             const graph = this.getActiveGraph();
             const targetNode = graph.nodes.get(targetPath);
             if (!targetNode) {
@@ -627,7 +555,6 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             if (!newId) {
                 throw new Error('Could not generate new ID');
             }
-            console.log(`[MoveSingle] Generated new ID: ${newId}`);
 
             // Move each file with the same ID but different extensions
             let primaryNewPath: string | null = null;
@@ -639,16 +566,13 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
                 const baseName = sourceNode.name;
                 const extension = sourceFile.extension;
                 const newName = `${newId} ${baseName}.${extension}`;
-                console.log(`[MoveSingle] New filename for extension ${extension}: ${newName}`);
 
                 // Determine the new path
                 const targetFolder = targetNode.isDirectory ? targetPath : this.app.vault.getAbstractFileByPath(targetPath)?.parent?.path || '';
                 const newPath = `${targetFolder}/${newName}`;
-                console.log(`[MoveSingle] Moving ${sourcePath} to ${newPath}`);
 
                 // Move the file
                 await this.app.fileManager.renameFile(sourceFile, newPath);
-                console.log(`[MoveSingle] Successfully moved to ${newPath}`);
 
                 // Store the first new path as the primary path
                 if (!primaryNewPath) {
@@ -664,57 +588,45 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
     }
 
     private getChildrenToMove(sourcePath: string): TAbstractFile[] {
-        console.log(`[GetChildren] Finding children of ${sourcePath}`);
         const graph = this.getActiveGraph();
         const children: TAbstractFile[] = [];
         const childPaths = graph.edges.get(sourcePath) || new Set<string>();
-        console.log(`[GetChildren] Found edges:`, Array.from(childPaths));
 
         for (const childPath of childPaths) {
             const file = this.app.vault.getAbstractFileByPath(childPath);
             if (file) {
                 children.push(file);
-                console.log(`[GetChildren] Added child: ${file.path}`);
             } else {
-                console.log(`[GetChildren] Warning: Could not find file for path: ${childPath}`);
+                console.warn(`[GetChildren] Warning: Could not find file for path: ${childPath}`);
             }
         }
 
         // Sort children to ensure consistent ordering
         const sortedChildren = children.sort((a, b) => a.path.localeCompare(b.path));
-        console.log(`[GetChildren] Final sorted children:`, sortedChildren.map(c => c.path));
         return sortedChildren;
     }
 
     private async moveChildrenRecursively(children: TAbstractFile[], newParentPath: string) {
-        console.log(`[MoveChildren] Moving ${children.length} children to ${newParentPath}`);
         for (const child of children) {
-            console.log(`[MoveChildren] Processing child: ${child.path}`);
-            
             // Get grandchildren BEFORE moving the child
             const grandchildren = this.getChildrenToMove(child.path);
-            console.log(`[MoveChildren] Found ${grandchildren.length} grandchildren for ${child.path}:`, grandchildren.map(c => c.path));
-            
+
             // Move this child to be under the new parent
             const newChildPath = await this.moveSingleNode(child, newParentPath);
             if (!newChildPath) {
-                console.log(`[MoveChildren] Failed to move child: ${child.path}`);
+                console.warn(`[MoveChildren] Failed to move child: ${child.path}`);
                 continue;
             }
-            console.log(`[MoveChildren] Moved child to: ${newChildPath}`);
 
             // Wait for graph to update after moving child
-            console.log(`[MoveChildren] Waiting for graph update after child move`);
             try {
                 await this.waitForGraphUpdate();
-                console.log(`[MoveChildren] Graph updated after child move`);
             } catch (error) {
                 console.warn(`[MoveChildren] Warning: ${error.message}`);
             }
 
             // Move grandchildren recursively if any were found
             if (grandchildren.length > 0) {
-                console.log(`[MoveChildren] Starting recursive move of ${grandchildren.length} grandchildren to ${newChildPath}`);
                 await this.moveChildrenRecursively(grandchildren, newChildPath);
             }
         }
@@ -902,8 +814,6 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
                 .replace('$PORT', port.toString())
                 .replace('$PASSWORD', password);
 
-            console.log('Running Marimo command:', command);
-
             // Run the command using our cross-platform utility
             let process: any;
             await executeCommand(
@@ -930,8 +840,7 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
 
             // Show modal with link to notebook
             const url = `http://localhost:${port}/?access_token=${password}`;
-            console.log('Opening Marimo URL:', url);
-            
+
             new MarimoLinkModal(this.app, url, file.basename).open();
 
         } catch (error) {
@@ -986,9 +895,7 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             if (this.settings.marimoRemoteSync) {
                 // Build scp command with escaped paths
                 const scpCommand = `scp -i "${escapedKeyPath}" "${escapedLocalPath}" ${this.settings.marimoRemoteUser}@${this.settings.marimoRemoteHost}:${remotePath}`;
-                
-                console.log('Copying file to remote server:', scpCommand);
-                
+
                 // Run scp command
                 const { exec } = require('child_process');
                 await new Promise<void>((resolve, reject) => {
@@ -1012,8 +919,6 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             // Source shell initialization files to ensure PATH is set correctly
             const sshCommand = `ssh -i "${escapedKeyPath}" -L ${localPort}:localhost:${remotePort} ${this.settings.marimoRemoteUser}@${this.settings.marimoRemoteHost} 'source ~/.zshrc 2>/dev/null || source ~/.bashrc 2>/dev/null; source ~/.profile 2>/dev/null; ${remoteCommand}'`;
             
-            console.log('Running remote command:', sshCommand);
-
             // Run the SSH command
             const { exec } = require('child_process');
             const process = exec(sshCommand, (error: any) => {
@@ -1104,8 +1009,7 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
 
             // Show modal with link to notebook
             const url = `http://localhost:${localPort}/?access_token=${password}`;
-            console.log('Opening Remote Marimo URL:', url);
-            
+
             new MarimoLinkModal(this.app, url, file.basename).open();
 
         } catch (error) {
@@ -1118,7 +1022,6 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         try {
             const command = this.settings.fileTypeCommands['py'];
             if (!command) {
-                console.log('No default Python command configured');
                 return;
             }
 
@@ -1136,7 +1039,6 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             
             // Replace filepath in command
             const finalCommand = command.replace('$FILEPATH', `"${filePath}"`);
-            console.log('Running default Python command:', finalCommand);
 
             await executeCommand(finalCommand, this.app, file.path);
         } catch (error) {
@@ -1282,35 +1184,24 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             }
         }
         
-        console.log(`[Reveal] Found ${parentsToExpand.size} parent paths to expand:`, Array.from(parentsToExpand));
-        
         // Create a new expanded paths set with all parents
         const currentExpandedPaths = view.getExpandedPaths();
         const newExpandedPaths = new Set([...currentExpandedPaths, ...parentsToExpand]);
-        
-        console.log(`[Reveal] Setting expanded paths:`, Array.from(newExpandedPaths));
-        console.log(`[Reveal] Setting selected path: ${filePath}`);
-        
+
         // Update the view's state directly
         view.setExpandedPaths(newExpandedPaths);
         view.setSelectedPath(filePath);
-        
+
         // Refresh the view to apply changes
         view.refreshPreservingState();
-        
-        // Additional logging
-        console.log(`[Reveal] After refresh - Expanded paths:`, Array.from(view.getExpandedPaths()));
-        console.log(`[Reveal] After refresh - Selected path: ${view.getSelectedPath()}`);
-        
+
         // Add a small delay to ensure the DOM has updated before scrolling
         setTimeout(() => {
             // Find the selected element and scroll to it
             const selectedElement = view.containerEl.querySelector('.file-item.selected');
             if (selectedElement) {
                 selectedElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                console.log('[Reveal] Scrolled to selected element');
             } else {
-                console.log('[Reveal] Could not find selected element to scroll to');
             }
         }, 200);
         
@@ -1353,22 +1244,6 @@ class MarimoLinkModal extends Modal {
 
     onClose() {
         const {contentEl} = this;
-        contentEl.empty();
-    }
-}
-
-class SampleModal extends Modal {
-    constructor(app: App) {
-        super(app);
-    }
-
-    onOpen() {
-        const { contentEl } = this;
-        contentEl.setText('Woah!');
-    }
-
-    onClose() {
-        const { contentEl } = this;
         contentEl.empty();
     }
 }
