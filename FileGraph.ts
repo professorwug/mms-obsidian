@@ -149,23 +149,18 @@ export function getParentId(nodeId: string): string | null {
     return nodeId.substring(0, 2);
 }
 
-function findExistingNode(name: string, id: string | undefined, graph: FileGraph): GraphNode | undefined {
-    return Array.from(graph.nodes.values()).find(node => 
-        node.name === name && node.id === id && !node.isDirectory
-    );
-}
-
 /**
  * Adds parent-child edges to the graph based on Folgezettel IDs and/or folder structure
- * 
+ *
  * @param node The node to add edges for
  * @param graph The file graph
  * @param originalParentPath The physical parent folder path (optional)
  * @param processedIds Set of IDs already processed (to prevent recursion loops)
  */
 function addParentEdgesToGraph(
-    node: GraphNode, 
-    graph: FileGraph, 
+    node: GraphNode,
+    graph: FileGraph,
+    idLookup: Map<string, GraphNode>,
     originalParentPath?: string, // Optional: physical parent folder path
     processedIds: Set<string> = new Set() // Track processed IDs to prevent recursion loops
 ): void {
@@ -186,29 +181,36 @@ function addParentEdgesToGraph(
         if (parentId) {
             // First check if the physical parent folder has this ID
             const parentFolder = originalParentPath ? graph.nodes.get(originalParentPath) : null;
-            
-            // Find parent node - first check if physical parent folder matches, then search all nodes
-            let parentNode = parentFolder?.id === parentId ? parentFolder : 
-                Array.from(graph.nodes.values()).find(n => n.id === parentId);
+
+            // Find parent node - first check if physical parent folder matches, then look up by ID
+            let parentNode = parentFolder?.id === parentId ? parentFolder : idLookup.get(parentId);
 
             if (!parentNode) {
                 // Make sure the parent ID is valid before creating a surrogate
                 if (isValidNodeId(parentId)) {
                     // Create surrogate node only if we couldn't find a matching folder
                     const surrogatePath = `__surrogate_${parentId}`;
-                    parentNode = {
-                        path: surrogatePath,
-                        name: parentId ? `[${parentId}]` : '[Unnamed Parent]', // Ensure name is never empty
-                        id: parentId,
-                        isDirectory: false,
-                        isSurrogate: true,
-                        extensions: new Set(),
-                        paths: new Set([surrogatePath])
-                    };
-                    graph.nodes.set(surrogatePath, parentNode);
-                    
-                    // Recursively process the surrogate node with the tracking set
-                    addParentEdgesToGraph(parentNode, graph, undefined, processedIds);
+                    parentNode = graph.nodes.get(surrogatePath);
+
+                    if (!parentNode) {
+                        parentNode = {
+                            path: surrogatePath,
+                            name: parentId ? `[${parentId}]` : '[Unnamed Parent]', // Ensure name is never empty
+                            id: parentId,
+                            isDirectory: false,
+                            isSurrogate: true,
+                            extensions: new Set(),
+                            paths: new Set([surrogatePath])
+                        };
+                        graph.nodes.set(surrogatePath, parentNode);
+
+                        if (!idLookup.has(parentId)) {
+                            idLookup.set(parentId, parentNode);
+                        }
+
+                        // Recursively process the surrogate node with the tracking set
+                        addParentEdgesToGraph(parentNode, graph, idLookup, undefined, processedIds);
+                    }
                 }
             }
 
@@ -270,6 +272,18 @@ export function buildFileGraph(items: Array<TFile | TFolder>, app: App): FileGra
         edges: new Map()
     };
 
+    // Lookup tables for faster parent and multi-extension node resolution
+    const nodesById = new Map<string, GraphNode>();
+    const nodesByNameAndId = new Map<string, GraphNode>();
+
+    const registerNodeId = (node: GraphNode) => {
+        if (node.id && !nodesById.has(node.id)) {
+            nodesById.set(node.id, node);
+        }
+    };
+
+    const getNodeKey = (name: string, id?: string) => `${id ?? '__NO_ID__'}::${name}`;
+
     // Add root directory
     const rootNode: GraphNode = {
         path: '/',
@@ -281,10 +295,11 @@ export function buildFileGraph(items: Array<TFile | TFolder>, app: App): FileGra
     };
     graph.nodes.set('/', rootNode);
     graph.edges.set('/', new Set());
+    registerNodeId(rootNode);
 
     // Sort items by path (ensures parents processed before children)
     const sortedItems = [...items].sort((a, b) => a.path.localeCompare(b.path));
-    
+
     let ignoredCount = 0;
     // Process each item
     for (const item of sortedItems) {
@@ -313,8 +328,9 @@ export function buildFileGraph(items: Array<TFile | TFolder>, app: App): FileGra
             else if (id.endsWith('&')) nodeType = 'planning';
         }
 
+        let node: GraphNode;
         if (isDirectory) {
-            const node: GraphNode = {
+            node = {
                 path: item.path,
                 name,
                 id,
@@ -325,19 +341,19 @@ export function buildFileGraph(items: Array<TFile | TFolder>, app: App): FileGra
                 paths: new Set([item.path])
             };
             graph.nodes.set(item.path, node);
+            registerNodeId(node);
         } else {
             const file = item as TFile;
-            const existingNode = findExistingNode(name, id, graph);
+            const nodeKey = getNodeKey(name, id);
+            const existingNode = nodesByNameAndId.get(nodeKey);
 
             if (existingNode) {
-                // Add extension and path to existing node
                 existingNode.extensions.add(file.extension);
                 existingNode.paths.add(file.path);
-                // Map the new path to the existing node
                 graph.nodes.set(file.path, existingNode);
+                node = existingNode;
             } else {
-                // Create new node
-                const node: GraphNode = {
+                node = {
                     path: file.path,
                     name,
                     id,
@@ -348,14 +364,15 @@ export function buildFileGraph(items: Array<TFile | TFolder>, app: App): FileGra
                     paths: new Set([file.path])
                 };
                 graph.nodes.set(file.path, node);
+                nodesByNameAndId.set(nodeKey, node);
+                registerNodeId(node);
             }
         }
 
-        // Process parent edges for the node (existing or new)
-        const node = graph.nodes.get(item.path)!;
         addParentEdgesToGraph(
             node,
             graph,
+            nodesById,
             item.parent ? item.parent.path : '/'
         );
     }
