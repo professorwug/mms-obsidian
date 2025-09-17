@@ -35,7 +35,6 @@ interface IMMSPlugin {
 interface FileItemProps {
     path: string;
     depth: number;
-    children: string[];
     graph: FileGraph;
     onToggle: (path: string) => void;
     expandedPaths: Set<string>;
@@ -58,11 +57,46 @@ interface FileItemProps {
     fileItemRefs?: React.MutableRefObject<Map<string, HTMLDivElement>>;
 }
 
-const FileItem: React.FC<FileItemProps> = ({ 
-    path, 
-    depth, 
-    children, 
-    graph, 
+const areFileItemPropsEqual = (prev: FileItemProps, next: FileItemProps): boolean => {
+    if (prev.path !== next.path) return false;
+    if (prev.depth !== next.depth) return false;
+    if (prev.graph !== next.graph) return false;
+    if (prev.app !== next.app) return false;
+    if (prev.plugin !== next.plugin) return false;
+
+    const prevExpanded = prev.expandedPaths.has(prev.path);
+    const nextExpanded = next.expandedPaths.has(next.path);
+    if (prevExpanded !== nextExpanded) return false;
+
+    const prevSelected = prev.selectedPath === prev.path;
+    const nextSelected = next.selectedPath === next.path;
+    if (prevSelected !== nextSelected) return false;
+
+    const prevMultiSelected = prev.selectedPaths.has(prev.path);
+    const nextMultiSelected = next.selectedPaths.has(next.path);
+    if (prevMultiSelected !== nextMultiSelected) return false;
+
+    const prevActiveExt = prev.activeExtensionsPath === prev.path;
+    const nextActiveExt = next.activeExtensionsPath === next.path;
+    if (prevActiveExt !== nextActiveExt) return false;
+
+    const prevDragging = prev.draggingPath === prev.path;
+    const nextDragging = next.draggingPath === next.path;
+    if (prevDragging !== nextDragging) return false;
+
+    const prevDropTarget = prev.dragOverPath === prev.path;
+    const nextDropTarget = next.dragOverPath === next.path;
+    if (prevDropTarget !== nextDropTarget) return false;
+
+    if (prev.isDragging !== next.isDragging) return false;
+
+    return true;
+};
+
+const FileItem = React.memo<FileItemProps>(({
+    path,
+    depth,
+    graph,
     onToggle,
     expandedPaths,
     selectedPath,
@@ -73,14 +107,12 @@ const FileItem: React.FC<FileItemProps> = ({
     app,
     activeExtensionsPath,
     setActiveExtensionsPath,
-    // Drag and drop props
     onDragStart,
     onDragEnd,
     isDragging,
     draggingPath,
     dragOverPath,
     setDragOverPath,
-    // Ref for scrolling
     fileItemRefs
 }) => {
     // Create a ref for the file item element
@@ -100,7 +132,26 @@ const FileItem: React.FC<FileItemProps> = ({
     const node = graph.nodes.get(path);
     if (!node) return null;
 
-    const hasChildren = children && children.length > 0;
+    const childPaths = React.useMemo(() => {
+        const rawChildren = Array.from(graph.edges.get(path) || [])
+            .filter(childPath => childPath !== '/');
+
+        return rawChildren.sort((a, b) => {
+            const nodeA = graph.nodes.get(a);
+            const nodeB = graph.nodes.get(b);
+            if (!nodeA || !nodeB) return 0;
+
+            const displayNameA = nodeA.id ?
+                `${nodeA.id}${nodeA.name ? ' ' + nodeA.name : ''}` :
+                (nodeA.name || `[${a.split('/').pop() || 'Unnamed'}]`);
+            const displayNameB = nodeB.id ?
+                `${nodeB.id}${nodeB.name ? ' ' + nodeB.name : ''}` :
+                (nodeB.name || `[${b.split('/').pop() || 'Unnamed'}]`);
+            return displayNameA.localeCompare(displayNameB);
+        });
+    }, [graph, path]);
+
+    const hasChildren = childPaths.length > 0;
     const expanded = expandedPaths.has(path);
     
     // We don't need this effect anymore since we're controlling extension visibility at the parent level
@@ -112,11 +163,11 @@ const FileItem: React.FC<FileItemProps> = ({
     const isMultiSelected = selectedPaths.has(path);
 
     // Check if this node has any mapping or planning children
-    const hasMappingChild = hasChildren && children.some(childPath => {
+    const hasMappingChild = hasChildren && childPaths.some(childPath => {
         const childNode = graph.nodes.get(childPath);
         return childNode?.nodeType === 'mapping';
     });
-    const hasPlanningChild = hasChildren && children.some(childPath => {
+    const hasPlanningChild = hasChildren && childPaths.some(childPath => {
         const childNode = graph.nodes.get(childPath);
         return childNode?.nodeType === 'planning';
     });
@@ -145,7 +196,7 @@ const FileItem: React.FC<FileItemProps> = ({
                 path,
                 node: graph.nodes.get(path),
                 hasChildren,
-                children
+                childPaths
             }, (key, value) => {
                 if (value instanceof Set) {
                     return Array.from(value);
@@ -674,65 +725,46 @@ const FileItem: React.FC<FileItemProps> = ({
                 </div>
             </div>
             {expanded && hasChildren && !isDraggingThis && (
-                <div 
+                <div
                     className="file-item-children"
                     style={{ '--parent-caret-position': `${depth * indentSize + 9}px` } as React.CSSProperties}
                 >
-                    {Array.from(graph.edges.get(path) || [])
-                        .filter(childPath => childPath !== '/') // Filter out the root node
-                        .sort((a, b) => {
-                            const nodeA = graph.nodes.get(a);
-                            const nodeB = graph.nodes.get(b);
-                            if (!nodeA || !nodeB) return 0;
+                    {childPaths.map(childPath => {
+                        const childNode = graph.nodes.get(childPath);
+                        if (!childNode) return null;
 
-                            // Sort by full display name (ID + name)
-                            const displayNameA = nodeA.id ? 
-                                `${nodeA.id}${nodeA.name ? ' ' + nodeA.name : ''}` : 
-                                (nodeA.name || `[${a.split('/').pop() || 'Unnamed'}]`);
-                            const displayNameB = nodeB.id ? 
-                                `${nodeB.id}${nodeB.name ? ' ' + nodeB.name : ''}` : 
-                                (nodeB.name || `[${b.split('/').pop() || 'Unnamed'}]`);
-                            return displayNameA.localeCompare(displayNameB);
-                        })
-                        .map(childPath => {
-                            const childNode = graph.nodes.get(childPath);
-                            if (!childNode) return null;
-
-                            const children = Array.from(graph.edges.get(childPath) || []) as string[];
-                            
-                            return (
-                                <FileItem
-                                    key={childPath}
-                                    path={childPath}
-                                    depth={depth + 1}
-                                    children={children}
-                                    graph={graph}
-                                    onToggle={onToggle}
-                                    expandedPaths={expandedPaths}
-                                    selectedPath={selectedPath}
-                                    selectedPaths={selectedPaths}
-                                    onSelect={onSelect}
-                                    onFileClick={onFileClick}
-                                    plugin={plugin}
-                                    app={app}
-                                    activeExtensionsPath={activeExtensionsPath}
-                                    setActiveExtensionsPath={setActiveExtensionsPath}
-                                    // Pass down drag and drop props
-                                    onDragStart={onDragStart}
-                                    onDragEnd={onDragEnd}
-                                    isDragging={isDragging}
-                                    draggingPath={draggingPath}
-                                    dragOverPath={dragOverPath}
-                                    setDragOverPath={setDragOverPath}
-                                    fileItemRefs={fileItemRefs}
-                                />
-                            );
-                        })}
+                        return (
+                            <FileItem
+                                key={childPath}
+                                path={childPath}
+                                depth={depth + 1}
+                                graph={graph}
+                                onToggle={onToggle}
+                                expandedPaths={expandedPaths}
+                                selectedPath={selectedPath}
+                                selectedPaths={selectedPaths}
+                                onSelect={onSelect}
+                                onFileClick={onFileClick}
+                                plugin={plugin}
+                                app={app}
+                                activeExtensionsPath={activeExtensionsPath}
+                                setActiveExtensionsPath={setActiveExtensionsPath}
+                                // Pass down drag and drop props
+                                onDragStart={onDragStart}
+                                onDragEnd={onDragEnd}
+                                isDragging={isDragging}
+                                draggingPath={draggingPath}
+                                dragOverPath={dragOverPath}
+                                setDragOverPath={setDragOverPath}
+                                fileItemRefs={fileItemRefs}
+                            />
+                        );
+                    })}
                 </div>
             )}
         </>
     );
-};
+}, areFileItemPropsEqual);
 
 interface FileBrowserComponentProps {
     files: TFile[];
@@ -823,15 +855,17 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         onStateChange?.(expandedPaths, selectedPath, graph);
     }, [expandedPaths, selectedPath, graph]);
 
-    const handleToggle = (path: string) => {
-        const newExpandedPaths = new Set(expandedPaths);
-        if (newExpandedPaths.has(path)) {
-            newExpandedPaths.delete(path);
-        } else {
-            newExpandedPaths.add(path);
-        }
-        setExpandedPaths(newExpandedPaths);
-    };
+    const handleToggle = React.useCallback((path: string) => {
+        setExpandedPaths(prev => {
+            const next = new Set(prev);
+            if (next.has(path)) {
+                next.delete(path);
+            } else {
+                next.add(path);
+            }
+            return next;
+        });
+    }, []);
 
     const handleSelect = React.useCallback((path: string, isMultiSelect: boolean) => {
         if (isMultiSelect) {
@@ -1350,8 +1384,9 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         }
     };
 
-    const rootChildren = React.useMemo(() => 
-        Array.from(graph.edges.get('/') || []) as string[], [graph]
+    const rootChildren = React.useMemo(
+        () => Array.from(graph.edges.get('/') || []) as string[],
+        [graph]
     );
 
     // Add mobile-specific class
@@ -1393,18 +1428,15 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                 {rootChildren.map(childPath => {
                     // Skip the root node itself
                     if (childPath === '/') return null;
-                    
+
                     const childNode = graph.nodes.get(childPath);
                     if (!childNode) return null;
 
-                    const children = Array.from(graph.edges.get(childPath) || []) as string[];
-                    
                     return (
                         <FileItem
                             key={childPath}
                             path={childPath}
                             depth={0}
-                            children={children}
                             graph={graph}
                             onToggle={handleToggle}
                             expandedPaths={expandedPaths}
