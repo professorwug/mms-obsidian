@@ -140,22 +140,6 @@ const FileItem: React.FC<FileItemProps> = ({
                 return;
             }
             
-            console.log('Main item clicked:', path);
-            console.log('Node details:', JSON.stringify({
-                path,
-                node: graph.nodes.get(path),
-                hasChildren,
-                children
-            }, (key, value) => {
-                if (value instanceof Set) {
-                    return Array.from(value);
-                }
-                if (key === 'paths' || key === 'extensions') {
-                    return Array.from(value || []);
-                }
-                return value;
-            }, 2));
-            
             e.stopPropagation();
             onSelect(path, e.ctrlKey || e.metaKey);
             
@@ -170,7 +154,6 @@ const FileItem: React.FC<FileItemProps> = ({
         if (isMobileApp()) {
             // If this node has children, toggle expansion
             if (hasChildren) {
-                console.log('Node has children, toggling expansion');
                 try {
                     onToggle(path);
                 } catch (error) {
@@ -190,29 +173,25 @@ const FileItem: React.FC<FileItemProps> = ({
         }
         // On desktop, just toggle expansion if there are children
         else if (hasChildren) {
-            console.log('Node has children, toggling expansion');
             try {
                 onToggle(path);
             } catch (error) {
                 console.error('Error toggling expansion:', error);
                 new Notice('Error toggling expansion');
             }
-        } 
+        }
         // If the node has no children and is not a directory, open it on single click
         else if (!node.isDirectory && !node.isSurrogate) {
-            console.log('Node has no children, opening file on single click');
             // For files with multiple extensions, prefer .md, otherwise use the first path
             if (node.extensions && node.extensions.size > 0 && node.paths && node.paths.size > 0) {
                 try {
                     const mdPath = Array.from(node.paths).find(p => p && typeof p === 'string' && p.toLowerCase().endsWith('.md'));
-                    console.log('Looking for preferred .md file:', mdPath);
-                    
+
                     if (mdPath) {
                         onFileClick(mdPath);
                     } else {
                         const firstPath = Array.from(node.paths)[0];
                         if (firstPath) {
-                            console.log('No .md file found, using first path:', firstPath);
                             onFileClick(firstPath);
                         } else {
                             console.error('No valid path found for node:', path);
@@ -232,9 +211,6 @@ const FileItem: React.FC<FileItemProps> = ({
         // For surrogate nodes, create a new markdown file
         if (node.isSurrogate && node.id && node.id.trim() !== '') {
             try {
-                console.log('Creating new file for surrogate node:', node.id);
-                console.log('Node path:', path);
-
                 // Store the expansion state of the surrogate node before creating the placeholder
                 const wasExpanded = expandedPaths.has(path);
 
@@ -244,7 +220,6 @@ const FileItem: React.FC<FileItemProps> = ({
                     visited.add(nodePath);
 
                     const childPaths = Array.from(graph.edges.get(nodePath) || []);
-                    console.log('Checking children of:', nodePath, childPaths);
 
                     for (const childPath of childPaths) {
                         if (!childPath) continue;
@@ -255,11 +230,10 @@ const FileItem: React.FC<FileItemProps> = ({
                             // Found a non-surrogate node, use its path
                             const nodePaths = Array.from(childNode.paths || []);
                             if (nodePaths.length === 0) continue;
-                            
+
                             const actualPath = nodePaths[0];
                             if (!actualPath) continue;
-                            
-                            console.log('Found non-surrogate child:', actualPath);
+
                             return actualPath;
                         } else {
                             // Recursively check this surrogate's children
@@ -279,14 +253,11 @@ const FileItem: React.FC<FileItemProps> = ({
 
                 const pathParts = actualChildPath.split('/');
                 const targetDir = pathParts.length > 1 ? pathParts.slice(0, -1).join('/') : '';
-                console.log('Using directory from non-surrogate child:', targetDir);
 
                 const newFilePath = targetDir ? `${targetDir}/${node.id} Placeholder.md` : `${node.id} Placeholder.md`;
-                console.log('Creating file at:', newFilePath);
-                
+
                 try {
                     await plugin.app.vault.create(newFilePath, '');
-                    console.log('Created new file:', newFilePath);
 
                     // If the surrogate was expanded, expand the new placeholder file
                     // We need to wait a moment for the file system event to trigger and the graph to update
@@ -329,9 +300,8 @@ const FileItem: React.FC<FileItemProps> = ({
     // Add double click handler to open files
     const handleDoubleClick = async (e: React.MouseEvent) => {
         try {
-            console.log('Node double-clicked:', path);
             e.stopPropagation();
-            
+
             const node = graph.nodes.get(path);
             if (!node) {
                 console.error('Node not found in graph for path:', path);
@@ -345,14 +315,12 @@ const FileItem: React.FC<FileItemProps> = ({
             if (node.extensions && node.extensions.size > 0 && node.paths && node.paths.size > 0) {
                 try {
                     const mdPath = Array.from(node.paths).find(p => p && typeof p === 'string' && p.toLowerCase().endsWith('.md'));
-                    console.log('Looking for preferred .md file:', mdPath);
-                    
+
                     if (mdPath) {
                         onFileClick(mdPath);
                     } else {
                         const firstPath = Array.from(node.paths)[0];
                         if (firstPath) {
-                            console.log('No .md file found, using first path:', firstPath);
                             onFileClick(firstPath);
                         } else {
                             console.error('No valid path found for node:', path);
@@ -533,10 +501,9 @@ const FileItem: React.FC<FileItemProps> = ({
 
     const handleExtensionClick = (e: React.MouseEvent, ext: string) => {
         try {
-            console.log('Extension click handler start:', ext);
             e.stopPropagation();
             e.preventDefault();
-            
+
             const node = graph.nodes.get(path);
             if (!node) {
                 console.error('Node not found in graph for path:', path);
@@ -550,10 +517,8 @@ const FileItem: React.FC<FileItemProps> = ({
                 return;
             }
 
-            console.log('Node paths:', Array.from(node.paths));
             const extPath = Array.from(node.paths).find(p => p && typeof p === 'string' && p.toLowerCase().endsWith(`.${ext}`));
-            console.log('Found path for extension:', extPath);
-            
+
             if (extPath) {
                 try {
                     onFileClick(extPath);
@@ -650,10 +615,9 @@ const FileItem: React.FC<FileItemProps> = ({
                         </span>
                         {!node.isDirectory && node.extensions.size > 0 && (
                             (!isMobileApp() || showExtensionsOnMobile) && (
-                                <div 
+                                <div
                                     className={`file-extensions ${isMobileApp() ? 'mobile-extensions' : ''}`}
                                     onClick={(e) => {
-                                        console.log('Extensions container clicked');
                                         e.stopPropagation();
                                         e.preventDefault();
                                     }}
@@ -735,8 +699,6 @@ const FileItem: React.FC<FileItemProps> = ({
 };
 
 interface FileBrowserComponentProps {
-    files: TFile[];
-    folders: TFolder[];
     app: App;
     plugin: IMMSPlugin;
     initialExpandedPaths: Set<string>;
@@ -744,10 +706,8 @@ interface FileBrowserComponentProps {
     onStateChange?: (expandedPaths: Set<string>, selectedPath: string | null, graph: FileGraph) => void;
 }
 
-const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({ 
-    files, 
-    folders, 
-    app, 
+const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
+    app,
     plugin,
     initialExpandedPaths,
     initialSelectedPath,
@@ -804,8 +764,6 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
 
     // Update state when props change
     React.useEffect(() => {
-        console.log('[FileBrowserComponent] Received new initialExpandedPaths:', Array.from(initialExpandedPaths));
-        console.log('[FileBrowserComponent] Received new initialSelectedPath:', initialSelectedPath);
         setExpandedPaths(initialExpandedPaths);
         setSelectedPath(initialSelectedPath);
         if (initialSelectedPath) {
@@ -1104,7 +1062,6 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         const successfulRenames = [];
         
         // PHASE 1: Execute all direct sibling renames first
-        console.log('Phase 1: Renaming parent nodes...');
         for (const op of directRenameOperations) {
             // Get the file name without the ID
             const { file, oldId, newId } = op;
@@ -1119,7 +1076,6 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
             try {
                 await (plugin as MMSPlugin).renameFileWithExtensions(file, newName);
                 successfulRenames.push({ oldPath: file.path, newName, oldName });
-                console.log(`Renamed parent: ${oldName} → ${newName}`);
             } catch (error) {
                 console.error(`Failed to rename ${file.path}:`, error);
                 
@@ -1142,7 +1098,6 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         
         // PHASE 2: Execute all child renames
         if (childRenameOperations.length > 0) {
-            console.log(`Phase 2: Renaming ${childRenameOperations.length} child nodes...`);
             new Notice(`Phase 2: Updating ${childRenameOperations.length} child nodes...`);
             
             for (const op of childRenameOperations) {
@@ -1154,7 +1109,6 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                 
                 try {
                     await (plugin as MMSPlugin).renameFileWithExtensions(file, newName);
-                    console.log(`Renamed child: ${oldName} → ${newName}`);
                 } catch (error) {
                     console.error(`Failed to rename child ${file.path}:`, error);
                     // Continue with other child renames even if one fails
@@ -1246,33 +1200,27 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         // Skip if we're dragging
         if (isDragging) return;
         
-        console.log('File click handler called with path:', path);
         const node = graph.nodes.get(path);
         if (!node || node.isDirectory) {
-            console.log('Invalid node or directory, ignoring click');
             return;
         }
 
         // Use the exact path that was passed in
         const extension = path.split('.').pop()?.toLowerCase();
         if (!extension) {
-            console.log('No extension found');
             return;
         }
 
-        console.log('Processing file with extension:', extension);
         const command = plugin.settings.fileTypeCommands[extension];
-        console.log('Found command from settings:', command);
-        
+
         // Ignore Python files on direct click - they must be opened via context menu
         if (extension === 'py') {
             return;
         }
-        
+
         if (extension === 'md' || extension === 'pdf' || (!command && extension !== 'html')) {
             // Default behavior: open in Obsidian in a new tab
-            console.log('Opening in Obsidian:', path);
-            
+
             // Mark that this file is being opened from the browser
             (plugin as MMSPlugin).setFileOpenSource('browser');
             
@@ -1290,7 +1238,6 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
 
             if (plugin.settings.htmlBehavior === 'obsidian' || isMobileApp()) {
                 // Open in Obsidian by simulating a link click
-                console.log('Opening HTML file in Obsidian via link:', path);
                 await app.workspace.openLinkText(file.path, '', true, { active: true });
             } else {
                 // Open in default browser (desktop only)
@@ -1334,14 +1281,11 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                 try {
                     // Get the absolute path by combining vault path with file path
                     const absolutePath = getPlatformAppropriateFilePath(file.path, app);
-                    console.log('Converting to absolute path:', absolutePath);
 
                     // Run the configured command with absolute path
                     const finalCommand = command.replace('$FILEPATH', `"${absolutePath}"`);
-                    console.log('Running command:', finalCommand);
-                    
+
                     await executeCommand(finalCommand, app, file.path);
-                    console.log('Command executed successfully');
                 } catch (error) {
                     console.error('Command error:', error);
                     new Notice(`Error running command: ${error.message}`);
@@ -1462,12 +1406,8 @@ export class FileBrowserView extends ItemView {
         const selectedPath = this.currentSelectedPath;
         const oldGraph = this.currentGraph;
 
-        const files = this.app.vault.getFiles();
-        const folders = this.app.vault.getAllLoadedFiles()
-            .filter(f => f instanceof TFolder) as TFolder[];
-
         const newGraph = (this.plugin as MMSPlugin).getActiveGraph();
-        
+
         const surrogateToPlaceholder = new Map<string, string>();
         if (oldGraph) {
             expandedPaths.forEach(path => {
@@ -1503,8 +1443,6 @@ export class FileBrowserView extends ItemView {
         if (this.root) {
             this.root.render(
                 <FileBrowserComponent
-                    files={files}
-                    folders={folders}
                     app={this.app}
                     plugin={this.plugin}
                     initialExpandedPaths={updatedExpandedPaths}
@@ -1533,15 +1471,9 @@ export class FileBrowserView extends ItemView {
         };
         (this.plugin as MMSPlugin).subscribeToGraphUpdates(this.graphUpdateHandler);
 
-        const files = this.app.vault.getFiles();
-        const folders = this.app.vault.getAllLoadedFiles()
-            .filter(f => f instanceof TFolder) as TFolder[];
-
         this.root = createRoot(container);
         this.root.render(
             <FileBrowserComponent
-                files={files}
-                folders={folders}
                 app={this.app}
                 plugin={this.plugin}
                 initialExpandedPaths={new Set()}
