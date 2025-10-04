@@ -1,7 +1,7 @@
 import { ItemView, TFile, TFolder, WorkspaceLeaf, Menu, TAbstractFile, Notice, App } from 'obsidian';
 import * as React from 'react';
 import { createRoot, Root } from 'react-dom/client';
-import { buildFileGraph, FileGraph, GraphNode, isValidNodeId, getParentId } from './FileGraph';
+import { FileGraph, GraphNode, isValidNodeId, getParentId } from './FileGraph';
 import MMSPlugin from './main';
 import { FolgemoveModal } from './FolgemoveModal';
 import { RenameModal } from './RenameModal';
