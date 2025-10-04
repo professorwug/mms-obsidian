@@ -5,7 +5,17 @@ import { FollowUpModal } from './FollowUpModal';
 import { RenameModal } from './RenameModal';
 import { RenameSymbolsModal } from './RenameSymbolsModal';
 import { getNextAvailableChildId, isMobileApp, executeCommand, getPlatformAppropriateFilePath, findFilesWithProblematicSymbols, getProblematicSymbols } from './utils';
-import { FileGraph, buildFileGraph, GraphNode } from './FileGraph';
+import {
+    FileGraph,
+    buildFileGraph,
+    GraphNode,
+    SerializedFileGraph,
+    serializeFileGraph,
+    deserializeFileGraph,
+    diffFileGraphs,
+    applyVaultChangesToGraph,
+    VaultChange,
+} from './FileGraph';
 
 // Remember to rename these classes and interfaces!
 
@@ -32,6 +42,11 @@ interface MMSPluginSettings {
     ignorePatterns: string[];
     autoRevealFiles: boolean;
     folgezettelBrowserFontSize: number;
+}
+
+interface PluginData {
+    settings: MMSPluginSettings;
+    graph?: SerializedFileGraph;
 }
 
 const DEFAULT_SETTINGS: MMSPluginSettings = {
@@ -102,6 +117,7 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
     private marimoInstances: Map<string, MarimoInstance> = new Map();
     private graphUpdateCallbacks: Set<(graph: FileGraph) => void> = new Set();
     private fileOpenSource: string | null = null; // Track if file was opened from the browser
+    private pendingGraphChanges: VaultChange[] = [];
 
     // Method to set the file open source (used by FileBrowserView)
     setFileOpenSource(source: string | null) {
@@ -143,24 +159,56 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
 
         // Register file system event handlers with debounced graph update
         let updateTimeout: NodeJS.Timeout | null = null;
-        const debouncedUpdate = () => {
+        const scheduleGraphUpdate = (change?: VaultChange) => {
+            if (change) {
+                this.enqueueGraphChange(change);
+            }
+
             if (updateTimeout) {
                 clearTimeout(updateTimeout);
             }
             updateTimeout = setTimeout(() => {
-                this.updateGraph();
+                const changes = this.drainGraphChanges();
+                if (changes.length > 0) {
+                    this.updateGraph(changes);
+                } else {
+                    this.updateGraph();
+                }
                 this.refreshViews();
             }, 100); // Debounce graph updates
         };
 
         this.registerEvent(
-            this.app.vault.on('create', debouncedUpdate)
+            this.app.vault.on('create', (file) => {
+                if (file instanceof TFile || file instanceof TFolder) {
+                    scheduleGraphUpdate({ type: 'create', file });
+                } else {
+                    scheduleGraphUpdate();
+                }
+            })
         );
         this.registerEvent(
-            this.app.vault.on('delete', debouncedUpdate)
+            this.app.vault.on('delete', (file) => {
+                scheduleGraphUpdate({
+                    type: 'delete',
+                    path: file.path,
+                    isDirectory: file instanceof TFolder,
+                });
+            })
         );
         this.registerEvent(
-            this.app.vault.on('rename', debouncedUpdate)
+            this.app.vault.on('rename', (file, oldPath) => {
+                if (file instanceof TFile || file instanceof TFolder) {
+                    scheduleGraphUpdate({
+                        type: 'rename',
+                        file,
+                        oldPath,
+                        wasDirectory: file instanceof TFolder,
+                    });
+                } else {
+                    scheduleGraphUpdate();
+                }
+            })
         );
         
         // Register event for file open to auto-reveal in folgezettel browser
@@ -455,14 +503,49 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
     }
 
     async loadSettings() {
-        this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+        const rawData = await this.loadData();
+        let loadedSettings: MMSPluginSettings | undefined;
+
+        if (rawData && typeof rawData === 'object' && 'settings' in rawData) {
+            const data = rawData as PluginData;
+            loadedSettings = data.settings;
+            if (data.graph) {
+                try {
+                    this.fileGraph = deserializeFileGraph(data.graph);
+                } catch (error) {
+                    console.error('[MMS] Failed to deserialize persisted graph, rebuilding from vault', error);
+                    this.fileGraph = null;
+                }
+            } else {
+                this.fileGraph = null;
+            }
+        } else if (rawData && typeof rawData === 'object') {
+            loadedSettings = rawData as MMSPluginSettings;
+            this.fileGraph = null;
+        } else {
+            this.fileGraph = null;
+        }
+
+        this.settings = Object.assign({}, DEFAULT_SETTINGS, loadedSettings);
         console.log('Loaded settings:', this.settings);
         // Apply font size setting
         this.updateFolgezettelBrowserFontSize();
     }
 
+    private async persistPluginData() {
+        try {
+            const data: PluginData = {
+                settings: this.settings,
+                graph: this.fileGraph ? serializeFileGraph(this.fileGraph) : undefined,
+            };
+            await this.saveData(data);
+        } catch (error) {
+            console.error('[MMS] Failed to persist plugin data', error);
+        }
+    }
+
     async saveSettings() {
-        await this.saveData(this.settings);
+        await this.persistPluginData();
     }
 
     updateFolgezettelBrowserFontSize() {
@@ -503,6 +586,16 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         return this.views.find(view => view.leaf === leaf) || this.views[0];
     }
 
+    private enqueueGraphChange(change: VaultChange) {
+        this.pendingGraphChanges.push(change);
+    }
+
+    private drainGraphChanges(): VaultChange[] {
+        const changes = this.pendingGraphChanges;
+        this.pendingGraphChanges = [];
+        return changes;
+    }
+
     // Method to refresh all file browser views while preserving state
     private refreshViews() {
         this.views.forEach(view => {
@@ -513,13 +606,35 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
     }
 
     // Method to update the central graph and notify subscribers
-    private updateGraph() {
-        const files = this.app.vault.getFiles();
-        const folders = this.app.vault.getAllLoadedFiles().filter(f => f instanceof TFolder) as TFolder[];
-        const items = [...files, ...folders];
-        const newGraph = buildFileGraph(items, this.app);
+    private updateGraph(changes?: VaultChange[]) {
+        const previousGraph = this.fileGraph;
+        let newGraph: FileGraph;
+
+        if (!previousGraph || !changes || changes.length === 0) {
+            const files = this.app.vault.getFiles();
+            const folders = this.app.vault.getAllLoadedFiles().filter(f => f instanceof TFolder) as TFolder[];
+            const items = [...files, ...folders];
+            newGraph = buildFileGraph(items, this.settings.ignorePatterns);
+        } else {
+            newGraph = applyVaultChangesToGraph(previousGraph, changes, this.settings.ignorePatterns);
+        }
+
+        const diff = diffFileGraphs(previousGraph, newGraph);
+
+        if (!diff.hasChanges && previousGraph) {
+            console.log('[MMS] Graph unchanged after update, skipping persistence and notifications');
+            return;
+        }
+
         this.fileGraph = newGraph;
-        
+
+        console.log(
+            `[MMS] Graph updated (nodes +${diff.addedNodes.length}/-${diff.removedNodes.length}, changed ${diff.changedNodes.length}; ` +
+            `edges +${diff.addedEdges.length}/-${diff.removedEdges.length})`
+        );
+
+        void this.persistPluginData();
+
         // Notify all subscribers of the new graph
         this.graphUpdateCallbacks.forEach(callback => callback(newGraph));
     }

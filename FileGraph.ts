@@ -1,4 +1,4 @@
-import { TFile, TFolder, App } from 'obsidian';
+import { TFile, TFolder } from 'obsidian';
 import { minimatch } from 'minimatch';
 
 export interface GraphNode {
@@ -16,6 +16,41 @@ export interface FileGraph {
     nodes: Map<string, GraphNode>;  // path -> node
     edges: Map<string, Set<string>>; // parent path -> set of child paths
 }
+
+export interface SerializedGraphNode {
+    path: string;
+    name: string;
+    id?: string;
+    nodeType?: 'mapping' | 'planning';
+    extensions: string[];
+    isDirectory: boolean;
+    isSurrogate: boolean;
+    paths: string[];
+}
+
+export interface SerializedFileGraph {
+    nodes: Record<string, SerializedGraphNode>;
+    edges: Record<string, string[]>;
+}
+
+export interface EdgeChange {
+    parent: string;
+    child: string;
+}
+
+export interface GraphDiff {
+    addedNodes: string[];
+    removedNodes: string[];
+    changedNodes: string[];
+    addedEdges: EdgeChange[];
+    removedEdges: EdgeChange[];
+    hasChanges: boolean;
+}
+
+export type VaultChange =
+    | { type: 'create'; file: TFile | TFolder }
+    | { type: 'delete'; path: string; isDirectory: boolean }
+    | { type: 'rename'; file: TFile | TFolder; oldPath: string; wasDirectory: boolean };
 
 /**
  * Validates if a string represents a valid Folgezettel ID with alternating number/letter pattern
@@ -240,7 +275,7 @@ function addParentEdgesToGraph(
 
 function shouldIgnorePath(path: string, patterns: string[]): boolean {
     if (path === '/') return false; // Never ignore root
-    
+
     for (const pattern of patterns) {
         const trimmedPattern = pattern.trim();
         if (!trimmedPattern) continue;
@@ -259,18 +294,7 @@ function shouldIgnorePath(path: string, patterns: string[]): boolean {
     return false;
 }
 
-export function buildFileGraph(items: Array<TFile | TFolder>, app: App): FileGraph {
-    // Get plugin instance and settings
-    const plugin = (app as any).plugins.getPlugin('mms');
-    const ignorePatterns = plugin?.settings?.ignorePatterns || [];
-    console.log('Building graph with ignore patterns:', ignorePatterns);
-
-    const graph: FileGraph = {
-        nodes: new Map(),
-        edges: new Map()
-    };
-
-    // Add root directory
+function createEmptyGraph(): FileGraph {
     const rootNode: GraphNode = {
         path: '/',
         name: '/',
@@ -279,88 +303,461 @@ export function buildFileGraph(items: Array<TFile | TFolder>, app: App): FileGra
         extensions: new Set(),
         paths: new Set(['/'])
     };
-    graph.nodes.set('/', rootNode);
-    graph.edges.set('/', new Set());
 
-    // Sort items by path (ensures parents processed before children)
-    const sortedItems = [...items].sort((a, b) => a.path.localeCompare(b.path));
-    
-    let ignoredCount = 0;
-    // Process each item
-    for (const item of sortedItems) {
-        // Check if this item should be ignored
-        if (shouldIgnorePath(item.path, ignorePatterns)) {
-            ignoredCount++;
-            continue;
+    return {
+        nodes: new Map([[rootNode.path, rootNode]]),
+        edges: new Map([[rootNode.path, new Set()]])
+    };
+}
+
+function cloneFileGraph(graph: FileGraph): FileGraph {
+    const nodeClones = new Map<GraphNode, GraphNode>();
+    const nodes = new Map<string, GraphNode>();
+
+    graph.nodes.forEach((node, path) => {
+        let clone = nodeClones.get(node);
+        if (!clone) {
+            clone = {
+                path: node.path,
+                name: node.name,
+                id: node.id,
+                nodeType: node.nodeType,
+                isDirectory: node.isDirectory,
+                isSurrogate: node.isSurrogate,
+                extensions: new Set(node.extensions),
+                paths: new Set(node.paths),
+            };
+            nodeClones.set(node, clone);
+        }
+        nodes.set(path, clone);
+    });
+
+    const edges = new Map<string, Set<string>>();
+    graph.edges.forEach((children, parent) => {
+        edges.set(parent, new Set(children));
+    });
+
+    return { nodes, edges };
+}
+
+function collectItemsForRebuild(item: TFile | TFolder): Array<TFile | TFolder> {
+    const items: Array<TFile | TFolder> = [];
+    const stack: Array<TFile | TFolder> = [item];
+
+    while (stack.length > 0) {
+        const current = stack.pop()!;
+        items.push(current);
+
+        if (current instanceof TFolder) {
+            for (const child of current.children) {
+                if (child instanceof TFile || child instanceof TFolder) {
+                    stack.push(child);
+                }
+            }
+        }
+    }
+
+    return items;
+}
+
+function removeSinglePath(graph: FileGraph, path: string) {
+    if (path === '/') {
+        return; // Never remove root
+    }
+
+    const node = graph.nodes.get(path);
+    const childSet = graph.edges.get(path);
+
+    if (childSet) {
+        graph.edges.delete(path);
+    }
+
+    graph.edges.forEach(children => {
+        children.delete(path);
+    });
+
+    if (!node) {
+        return;
+    }
+
+    graph.nodes.delete(path);
+    node.paths.delete(path);
+
+    if (node.path !== path) {
+        return;
+    }
+
+    if (node.paths.size === 0) {
+        return;
+    }
+
+    const newPrimary = node.paths.values().next().value;
+    node.path = newPrimary;
+
+    if (!graph.nodes.has(newPrimary)) {
+        graph.nodes.set(newPrimary, node);
+    }
+
+    if (childSet) {
+        const existing = graph.edges.get(newPrimary);
+        if (!existing) {
+            graph.edges.set(newPrimary, new Set(childSet));
+        } else {
+            childSet.forEach(child => existing.add(child));
+        }
+    }
+
+    graph.edges.forEach(children => {
+        if (children.has(path)) {
+            children.delete(path);
+            children.add(newPrimary);
+        }
+    });
+}
+
+function removePathsFromGraph(
+    graph: FileGraph,
+    removals: Array<{ path: string; includeDescendants: boolean }>
+) {
+    const targets = new Set<string>();
+
+    for (const removal of removals) {
+        targets.add(removal.path);
+        if (removal.includeDescendants) {
+            const prefix = removal.path.endsWith('/') ? removal.path : `${removal.path}/`;
+            graph.nodes.forEach((_node, existingPath) => {
+                if (existingPath !== removal.path && existingPath.startsWith(prefix)) {
+                    targets.add(existingPath);
+                }
+            });
+        }
+    }
+
+    const ordered = Array.from(targets).sort((a, b) => b.length - a.length);
+    for (const path of ordered) {
+        removeSinglePath(graph, path);
+    }
+}
+
+function cleanupOrphanedSurrogates(graph: FileGraph) {
+    const toRemove: string[] = [];
+
+    graph.nodes.forEach((node, path) => {
+        if (!node.isSurrogate) {
+            return;
         }
 
-        const isDirectory = item instanceof TFolder;
-        
-        // Parse name and ID, using basename for files
-        const basename = isDirectory ? item.name : (item as TFile).basename;
-        const parts = basename.split(/\s+/).filter(p => p.trim() !== ''); // Filter out empty parts
-        const firstWord = parts.length > 0 ? parts[0] : '';
-        const id = parts.length > 1 && isValidNodeId(firstWord) ? firstWord : undefined;
-        // Ensure name is never empty
-        const name = id && parts.length > 1 ? 
-            parts.slice(1).join(' ') || `[Unnamed-${Date.now().toString().slice(-4)}]` : 
-            basename || `[Unnamed-${Date.now().toString().slice(-4)}]`;
-
-        // Determine node type based on ID suffix
-        let nodeType: 'mapping' | 'planning' | undefined;
-        if (id) {
-            if (id.endsWith('%')) nodeType = 'mapping';
-            else if (id.endsWith('&')) nodeType = 'planning';
+        const hasChildren = graph.edges.get(node.path)?.size ?? 0;
+        if (hasChildren > 0) {
+            return;
         }
 
-        if (isDirectory) {
+        const hasParent = Array.from(graph.edges.values()).some(children => children.has(node.path));
+        if (!hasParent) {
+            toRemove.push(path);
+        }
+    });
+
+    toRemove.forEach(path => {
+        graph.nodes.delete(path);
+        graph.edges.delete(path);
+        graph.edges.forEach(children => children.delete(path));
+    });
+}
+
+function upsertItemIntoGraph(
+    graph: FileGraph,
+    item: TFile | TFolder,
+    ignorePatterns: string[],
+): boolean {
+    if (shouldIgnorePath(item.path, ignorePatterns)) {
+        return false;
+    }
+
+    const isDirectory = item instanceof TFolder;
+
+    // Parse name and ID, using basename for files
+    const basename = isDirectory ? item.name : (item as TFile).basename;
+    const parts = basename.split(/\s+/).filter(p => p.trim() !== ''); // Filter out empty parts
+    const firstWord = parts.length > 0 ? parts[0] : '';
+    const id = parts.length > 1 && isValidNodeId(firstWord) ? firstWord : undefined;
+    // Ensure name is never empty
+    const name = id && parts.length > 1 ?
+        parts.slice(1).join(' ') || `[Unnamed-${Date.now().toString().slice(-4)}]` :
+        basename || `[Unnamed-${Date.now().toString().slice(-4)}]`;
+
+    // Determine node type based on ID suffix
+    let nodeType: 'mapping' | 'planning' | undefined;
+    if (id) {
+        if (id.endsWith('%')) nodeType = 'mapping';
+        else if (id.endsWith('&')) nodeType = 'planning';
+    }
+
+    if (isDirectory) {
+        const node: GraphNode = {
+            path: item.path,
+            name,
+            id,
+            nodeType,
+            isDirectory: true,
+            isSurrogate: false,
+            extensions: new Set(),
+            paths: new Set([item.path])
+        };
+        graph.nodes.set(item.path, node);
+    } else {
+        const file = item as TFile;
+        const existingNode = findExistingNode(name, id, graph);
+
+        if (existingNode) {
+            existingNode.extensions.add(file.extension);
+            existingNode.paths.add(file.path);
+            graph.nodes.set(file.path, existingNode);
+        } else {
             const node: GraphNode = {
-                path: item.path,
+                path: file.path,
                 name,
                 id,
                 nodeType,
-                isDirectory: true,
+                isDirectory: false,
                 isSurrogate: false,
-                extensions: new Set(),
-                paths: new Set([item.path])
+                extensions: new Set([file.extension]),
+                paths: new Set([file.path])
             };
-            graph.nodes.set(item.path, node);
-        } else {
-            const file = item as TFile;
-            const existingNode = findExistingNode(name, id, graph);
-
-            if (existingNode) {
-                // Add extension and path to existing node
-                existingNode.extensions.add(file.extension);
-                existingNode.paths.add(file.path);
-                // Map the new path to the existing node
-                graph.nodes.set(file.path, existingNode);
-            } else {
-                // Create new node
-                const node: GraphNode = {
-                    path: file.path,
-                    name,
-                    id,
-                    nodeType,
-                    isDirectory: false,
-                    isSurrogate: false,
-                    extensions: new Set([file.extension]),
-                    paths: new Set([file.path])
-                };
-                graph.nodes.set(file.path, node);
-            }
+            graph.nodes.set(file.path, node);
         }
+    }
 
-        // Process parent edges for the node (existing or new)
-        const node = graph.nodes.get(item.path)!;
-        addParentEdgesToGraph(
-            node,
-            graph,
-            item.parent ? item.parent.path : '/'
-        );
+    const node = graph.nodes.get(item.path)!;
+    addParentEdgesToGraph(
+        node,
+        graph,
+        item.parent ? item.parent.path : '/'
+    );
+
+    return true;
+}
+
+export function buildFileGraph(items: Array<TFile | TFolder>, ignorePatterns: string[]): FileGraph {
+    console.log('Building graph with ignore patterns:', ignorePatterns);
+
+    const graph = createEmptyGraph();
+
+    const sortedItems = [...items].sort((a, b) => a.path.localeCompare(b.path));
+
+    let ignoredCount = 0;
+    for (const item of sortedItems) {
+        const processed = upsertItemIntoGraph(graph, item, ignorePatterns);
+        if (!processed) {
+            ignoredCount++;
+        }
     }
 
     console.log(`Filtered ${ignoredCount} items based on ignore patterns`);
 
     return graph;
+}
+
+export function applyVaultChangesToGraph(
+    previous: FileGraph,
+    changes: VaultChange[],
+    ignorePatterns: string[],
+): FileGraph {
+    if (changes.length === 0) {
+        return previous;
+    }
+
+    const graph = cloneFileGraph(previous);
+    const removals: Array<{ path: string; includeDescendants: boolean }> = [];
+    const itemsToProcess = new Map<string, TFile | TFolder>();
+
+    for (const change of changes) {
+        if (change.type === 'delete') {
+            removals.push({ path: change.path, includeDescendants: change.isDirectory });
+            continue;
+        }
+
+        if (change.type === 'rename') {
+            removals.push({ path: change.oldPath, includeDescendants: change.wasDirectory });
+        }
+
+        const sourceItem = change.file;
+        const collected = collectItemsForRebuild(sourceItem);
+        for (const item of collected) {
+            itemsToProcess.set(item.path, item);
+        }
+    }
+
+    if (removals.length > 0) {
+        removePathsFromGraph(graph, removals);
+    }
+
+    const sortedItems = Array.from(itemsToProcess.values()).sort((a, b) => a.path.localeCompare(b.path));
+    for (const item of sortedItems) {
+        upsertItemIntoGraph(graph, item, ignorePatterns);
+    }
+
+    cleanupOrphanedSurrogates(graph);
+
+    return graph;
+}
+
+function setsAreEqual<T>(a: Set<T>, b: Set<T>): boolean {
+    if (a.size !== b.size) {
+        return false;
+    }
+
+    for (const value of a) {
+        if (!b.has(value)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function nodesAreEqual(a: GraphNode, b: GraphNode): boolean {
+    return (
+        a.path === b.path &&
+        a.name === b.name &&
+        a.id === b.id &&
+        a.nodeType === b.nodeType &&
+        a.isDirectory === b.isDirectory &&
+        a.isSurrogate === b.isSurrogate &&
+        setsAreEqual(a.extensions, b.extensions) &&
+        setsAreEqual(a.paths, b.paths)
+    );
+}
+
+export function diffFileGraphs(previous: FileGraph | null, next: FileGraph): GraphDiff {
+    const addedNodes: string[] = [];
+    const removedNodes: string[] = [];
+    const changedNodes: string[] = [];
+    const addedEdges: EdgeChange[] = [];
+    const removedEdges: EdgeChange[] = [];
+
+    if (!previous) {
+        addedNodes.push(...Array.from(next.nodes.keys()));
+        next.edges.forEach((children, parent) => {
+            children.forEach(child => {
+                addedEdges.push({ parent, child });
+            });
+        });
+
+        return {
+            addedNodes,
+            removedNodes,
+            changedNodes,
+            addedEdges,
+            removedEdges,
+            hasChanges: addedNodes.length > 0 || addedEdges.length > 0,
+        };
+    }
+
+    // Compare nodes
+    previous.nodes.forEach((_node, path) => {
+        if (!next.nodes.has(path)) {
+            removedNodes.push(path);
+        }
+    });
+
+    next.nodes.forEach((node, path) => {
+        const previousNode = previous.nodes.get(path);
+        if (!previousNode) {
+            addedNodes.push(path);
+            return;
+        }
+
+        if (!nodesAreEqual(previousNode, node)) {
+            changedNodes.push(path);
+        }
+    });
+
+    const allParents = new Set<string>([
+        ...Array.from(previous.edges.keys()),
+        ...Array.from(next.edges.keys()),
+    ]);
+
+    allParents.forEach(parent => {
+        const previousChildren = previous.edges.get(parent) || new Set<string>();
+        const nextChildren = next.edges.get(parent) || new Set<string>();
+
+        previousChildren.forEach(child => {
+            if (!nextChildren.has(child)) {
+                removedEdges.push({ parent, child });
+            }
+        });
+
+        nextChildren.forEach(child => {
+            if (!previousChildren.has(child)) {
+                addedEdges.push({ parent, child });
+            }
+        });
+    });
+
+    return {
+        addedNodes,
+        removedNodes,
+        changedNodes,
+        addedEdges,
+        removedEdges,
+        hasChanges:
+            addedNodes.length > 0 ||
+            removedNodes.length > 0 ||
+            changedNodes.length > 0 ||
+            addedEdges.length > 0 ||
+            removedEdges.length > 0,
+    };
+}
+
+export function serializeFileGraph(graph: FileGraph): SerializedFileGraph {
+    const serializedNodes: Record<string, SerializedGraphNode> = {};
+    graph.nodes.forEach((node, path) => {
+        serializedNodes[path] = {
+            path: node.path,
+            name: node.name,
+            id: node.id,
+            nodeType: node.nodeType,
+            extensions: Array.from(node.extensions),
+            isDirectory: node.isDirectory,
+            isSurrogate: node.isSurrogate,
+            paths: Array.from(node.paths),
+        };
+    });
+
+    const serializedEdges: Record<string, string[]> = {};
+    graph.edges.forEach((children, parent) => {
+        serializedEdges[parent] = Array.from(children);
+    });
+
+    return {
+        nodes: serializedNodes,
+        edges: serializedEdges,
+    };
+}
+
+export function deserializeFileGraph(serialized: SerializedFileGraph): FileGraph {
+    const nodes = new Map<string, GraphNode>();
+    Object.entries(serialized.nodes).forEach(([path, node]) => {
+        nodes.set(path, {
+            path: node.path,
+            name: node.name,
+            id: node.id,
+            nodeType: node.nodeType,
+            extensions: new Set(node.extensions),
+            isDirectory: node.isDirectory,
+            isSurrogate: node.isSurrogate,
+            paths: new Set(node.paths),
+        });
+    });
+
+    const edges = new Map<string, Set<string>>();
+    Object.entries(serialized.edges).forEach(([parent, children]) => {
+        edges.set(parent, new Set(children));
+    });
+
+    return {
+        nodes,
+        edges,
+    };
 }
