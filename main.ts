@@ -1,4 +1,4 @@
-import { App, Modal, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, TFile, TFolder, TAbstractFile } from 'obsidian';
+import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, TFile, TFolder, TAbstractFile } from 'obsidian';
 import { FileBrowserView } from './FileBrowserView';
 import { FolgemoveModal } from './FolgemoveModal';
 import { FollowUpModal } from './FollowUpModal';
@@ -239,6 +239,15 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
                     // Folders can't be opened in an editor — reveal in the browser instead
                     await this.revealFileInFolgezettelBrowser(target as TFile);
                 }
+            }
+        });
+
+        // Extract the active heading section into a new folgezettel note
+        this.addCommand({
+            id: 'extract-heading',
+            name: 'Extract heading into folgezettel note',
+            editorCallback: (editor: Editor, view: MarkdownView) => {
+                this.extractHeadingToZettel(editor, view);
             }
         });
 
@@ -836,6 +845,105 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         } catch (error) {
             console.error('Error creating follow up note:', error);
             new Notice(`Error creating follow up note: ${error.message}`);
+        }
+    }
+
+    /**
+     * MMS take on Note Composer's "Extract this heading": take the section the
+     * cursor is in (heading line through to the next heading of equal or higher
+     * level), file its body as a new note under a folgemove-searched parent
+     * (named "<child-id> <heading>"), and replace the section with the original
+     * heading followed by an ![[embed]] of the new note.
+     */
+    async extractHeadingToZettel(editor: Editor, view: MarkdownView) {
+        try {
+            const file = view.file;
+            if (!file) {
+                new Notice('No active file');
+                return;
+            }
+
+            const headings = this.app.metadataCache.getFileCache(file)?.headings;
+            if (!headings || headings.length === 0) {
+                new Notice('This note has no headings');
+                return;
+            }
+
+            // The "active" heading: the nearest one at or above the cursor line
+            const cursorLine = editor.getCursor().line;
+            let heading = null;
+            for (const h of headings) {
+                if (h.position.start.line <= cursorLine) heading = h;
+                else break;
+            }
+            if (!heading) {
+                new Notice('Cursor is not inside a heading section');
+                return;
+            }
+
+            // Section extends to the next heading of equal or higher level
+            const startLine = heading.position.start.line;
+            const lastLine = editor.lastLine();
+            let endLine = lastLine + 1; // exclusive
+            for (const h of headings) {
+                if (h.position.start.line > startLine && h.level <= heading.level) {
+                    endLine = h.position.start.line;
+                    break;
+                }
+            }
+            const sectionEndPos = endLine > lastLine
+                ? { line: lastLine, ch: editor.getLine(lastLine).length }
+                : { line: endLine, ch: 0 };
+
+            const bodyText = startLine + 1 > lastLine ? '' :
+                editor.getRange({ line: startLine + 1, ch: 0 }, sectionEndPos);
+
+            // Pick the folgezettel parent with the search modal
+            const modal = new FolgemoveModal(this.app, 'File this heading under…');
+            modal.open();
+            const parent = await modal.getResult();
+            if (!parent) return; // User cancelled
+
+            const graph = this.getActiveGraph();
+            const parentNode = graph.nodes.get(parent.path);
+            if (!parentNode) {
+                new Notice('Selected parent not found in graph');
+                return;
+            }
+            const newId = getNextAvailableChildId(parent.path, graph);
+            if (!newId) {
+                new Notice('The selected parent must have a folgezettel ID');
+                return;
+            }
+
+            // Heading text -> safe file name (strip characters that break
+            // filenames or wikilinks)
+            const cleanHeading = heading.heading.replace(/[\\/:*?"<>|#^[\]]/g, '').trim()
+                || 'Extracted note';
+            const newBasename = `${newId} ${cleanHeading}`;
+
+            // New note lands next to (or inside) the chosen parent
+            let targetFolder = parentNode.isDirectory
+                ? parentNode.path
+                : (this.app.vault.getAbstractFileByPath(parent.path)?.parent?.path || '');
+            if (targetFolder === '/') targetFolder = '';
+            const newPath = targetFolder ? `${targetFolder}/${newBasename}.md` : `${newBasename}.md`;
+
+            // Create first — if this fails, the original note is untouched
+            await this.app.vault.create(newPath, bodyText.trim() + '\n');
+
+            // Replace the section with heading + embed
+            const headingLine = editor.getLine(startLine);
+            editor.replaceRange(
+                `${headingLine}\n![[${newBasename}]]\n\n`,
+                { line: startLine, ch: 0 },
+                sectionEndPos
+            );
+
+            new Notice(`Extracted to ${newBasename}`);
+        } catch (error) {
+            console.error('Error extracting heading:', error);
+            new Notice(`Error extracting heading: ${error.message}`);
         }
     }
 
