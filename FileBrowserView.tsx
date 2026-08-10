@@ -1340,6 +1340,35 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         [graph, effectiveRoot, rootedMode]
     );
 
+    // In rooted mode, ID-less files at the root level are tucked into a
+    // collapsed "Unfiled" group instead of cluttering the top of the tree
+    const { idRootChildren, unfiledChildren } = React.useMemo(() => {
+        if (!rootedMode) {
+            return { idRootChildren: rootChildren, unfiledChildren: [] as string[] };
+        }
+        const withId: string[] = [];
+        const unfiled: string[] = [];
+        for (const childPath of rootChildren) {
+            const node = graph.nodes.get(childPath);
+            if (node?.id) {
+                withId.push(childPath);
+            } else {
+                unfiled.push(childPath);
+            }
+        }
+        return { idRootChildren: withId, unfiledChildren: unfiled };
+    }, [rootChildren, rootedMode, graph]);
+
+    const [unfiledExpanded, setUnfiledExpanded] = React.useState(false);
+
+    // If something reveals/selects an unfiled file, open the group so the
+    // selection is actually visible
+    React.useEffect(() => {
+        if (selectedPath && unfiledChildren.includes(selectedPath)) {
+            setUnfiledExpanded(true);
+        }
+    }, [selectedPath, unfiledChildren]);
+
     // Recently edited files with folgezettel IDs (scoped to the root folder in
     // rooted mode), shown in a collapsed-by-default box above the tree
     const [recentsExpanded, setRecentsExpanded] = React.useState(false);
@@ -1427,7 +1456,7 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                     }
                 }}
             >
-                {rootChildren.map(childPath => {
+                {idRootChildren.map(childPath => {
                     const childNode = graph.nodes.get(childPath);
                     if (!childNode) return null;
 
@@ -1463,6 +1492,52 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                         />
                     );
                 })}
+
+                {/* ID-less files at the root level, tucked away in rooted mode */}
+                {unfiledChildren.length > 0 && (
+                    <div className="mms-unfiled">
+                        <div
+                            className="mms-unfiled-header"
+                            onClick={() => setUnfiledExpanded(!unfiledExpanded)}
+                        >
+                            <span className={`collapse-icon ${unfiledExpanded ? 'expanded' : ''}`}>›</span>
+                            <span className="mms-unfiled-title">Unfiled</span>
+                            <span className="mms-unfiled-count">{unfiledChildren.length}</span>
+                        </div>
+                        {unfiledExpanded && unfiledChildren.map(childPath => {
+                            const childNode = graph.nodes.get(childPath);
+                            if (!childNode) return null;
+
+                            return (
+                                <FileItem
+                                    key={childPath}
+                                    path={childPath}
+                                    depth={1}
+                                    children={visibleChildren(graph, childPath, rootedMode)}
+                                    graph={graph}
+                                    hideNonIdFolders={rootedMode}
+                                    onToggle={handleToggle}
+                                    expandedPaths={expandedPaths}
+                                    selectedPath={selectedPath}
+                                    selectedPaths={selectedPaths}
+                                    onSelect={handleSelect}
+                                    onFileClick={handleFileClick}
+                                    plugin={plugin}
+                                    app={app}
+                                    activeExtensionsPath={activeExtensionsPath}
+                                    setActiveExtensionsPath={setActiveExtensionsPath}
+                                    onDragStart={handleDragStart}
+                                    onDragEnd={handleDragEnd}
+                                    isDragging={isDragging}
+                                    draggingPath={draggingPath}
+                                    dragOverPath={dragOverPath}
+                                    setDragOverPath={setDragOverPath}
+                                    fileItemRefs={fileItemRefs}
+                                />
+                            );
+                        })}
+                    </div>
+                )}
             </div>
         </div>
     );

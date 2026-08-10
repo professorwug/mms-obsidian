@@ -484,3 +484,44 @@ If your plugin does not need CSS, delete this file.
 .mms-recents-item:hover {
     background-color: var(--background-modifier-hover);
 }
+
+/* Unfiled group for ID-less files in rooted mode */
+.mms-unfiled {
+    margin-top: 6px;
+    border-top: 1px solid var(--background-modifier-border);
+    padding-top: 4px;
+}
+
+.mms-unfiled-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+    user-select: none;
+    color: var(--text-muted);
+    font-size: calc(var(--mms-browser-font-size, 14px) * 0.9);
+    font-weight: 600;
+}
+
+.mms-unfiled-header:hover {
+    color: var(--text-normal);
+}
+
+.mms-unfiled-header .collapse-icon {
+    display: inline-block;
+    transition: transform 100ms ease-in-out;
+}
+
+.mms-unfiled-header .collapse-icon.expanded {
+    transform: rotate(90deg);
+}
+
+.mms-unfiled-count {
+    margin-left: auto;
+    font-weight: 400;
+    font-size: calc(var(--mms-browser-font-size, 14px) * 0.8);
+    background-color: var(--background-modifier-hover);
+    border-radius: 8px;
+    padding: 0 6px;
+}
