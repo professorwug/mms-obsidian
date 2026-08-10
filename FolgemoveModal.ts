@@ -314,12 +314,17 @@ export class FolgemoveModal extends SuggestModal<ScoredItem> {
     onClose(): void {
         super.onClose();
         // Resolve with null when the modal closes without a selection (e.g. Esc).
-        // Note: this must happen here — modalEl never fires a 'closed' DOM event,
-        // so a listener-based approach left callers awaiting forever.
-        if (this.resolvePromise) {
-            this.resolvePromise(null);
-            this.resolvePromise = null;
-        }
+        // Note: modalEl never fires a 'closed' DOM event, so this must happen here.
+        // Deferred by a tick because SuggestModal calls close() BEFORE
+        // onChooseSuggestion() — resolving synchronously here would turn every
+        // actual selection into a "cancel" (the selection would arrive after the
+        // promise was already settled with null).
+        setTimeout(() => {
+            if (this.resolvePromise) {
+                this.resolvePromise(null);
+                this.resolvePromise = null;
+            }
+        }, 0);
     }
 
     async getResult(): Promise<TAbstractFile | null> {

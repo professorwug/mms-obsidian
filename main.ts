@@ -192,6 +192,10 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         // Automatically open the file browser view
         this.app.workspace.onLayoutReady(() => {
             this.activateView();
+            // Workspace restore can materialize additional saved browser leaves
+            // shortly after layout-ready (they restore as deferred views), so run
+            // one more dedup pass once the dust settles
+            setTimeout(() => this.dedupeBrowserLeaves(), 1500);
         });
 
         // Add Folgemove command
@@ -395,21 +399,22 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         document.documentElement.style.setProperty('--mms-browser-font-size', `${this.settings.folgezettelBrowserFontSize}px`);
     }
 
-    async activateView() {
-        const { workspace } = this.app;
-
-        // First check if there are any existing leaves
-        const existingLeaves = workspace.getLeavesOfType('folgezettel-browser');
-        
-        // If there are multiple leaves, keep only the first one and detach others
+    // Keep only the first Folgezettel Browser leaf, detach any duplicates
+    private dedupeBrowserLeaves() {
+        const existingLeaves = this.app.workspace.getLeavesOfType('folgezettel-browser');
         if (existingLeaves.length > 1) {
             console.log(`[MMS] Found ${existingLeaves.length} Folgezettel Browser views, cleaning up duplicates`);
-            // Keep the first leaf and detach others
             for (let i = 1; i < existingLeaves.length; i++) {
                 existingLeaves[i].detach();
             }
         }
-        
+    }
+
+    async activateView() {
+        const { workspace } = this.app;
+
+        this.dedupeBrowserLeaves();
+
         // Now get the leaf (either the single existing one, or the first one we kept)
         let leaf = workspace.getLeavesOfType('folgezettel-browser')[0];
         if (!leaf) {
