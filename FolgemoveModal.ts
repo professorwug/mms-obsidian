@@ -311,19 +311,20 @@ export class FolgemoveModal extends SuggestModal<ScoredItem> {
         return lenDiff !== 0 ? lenDiff : a.path.toLowerCase().localeCompare(b.path.toLowerCase());
     }
 
+    onClose(): void {
+        super.onClose();
+        // Resolve with null when the modal closes without a selection (e.g. Esc).
+        // Note: this must happen here — modalEl never fires a 'closed' DOM event,
+        // so a listener-based approach left callers awaiting forever.
+        if (this.resolvePromise) {
+            this.resolvePromise(null);
+            this.resolvePromise = null;
+        }
+    }
+
     async getResult(): Promise<TAbstractFile | null> {
         return new Promise((resolve) => {
             this.resolvePromise = resolve;
-            
-            // Set up a one-time close handler that resolves with null if no item was selected
-            const closeHandler = () => {
-                if (this.resolvePromise) {
-                    this.resolvePromise(null);
-                    this.resolvePromise = null;
-                }
-                this.modalEl.removeEventListener('closed', closeHandler);
-            };
-            this.modalEl.addEventListener('closed', closeHandler);
         });
     }
 }

@@ -125,9 +125,12 @@ export function getNextAvailableChildId(parentPath: string, graph: FileGraph): s
         baseParentId = parentId.slice(0, -1);
     }
 
-    // Get all children of the parent using graph edges
+    // Get all children of the parent using graph edges.
+    // Edges are keyed by the node's primary path, so resolve aliases first —
+    // otherwise a multi-extension parent reported no children and this handed
+    // out an already-taken child ID.
     const childIds = new Set<string>();
-    const children = graph.edges.get(parentPath) || new Set<string>();
+    const children = graph.edges.get(parentNode.path) || new Set<string>();
     
     // Get all children regardless of ID validation status
     for (const childPath of children) {

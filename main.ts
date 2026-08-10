@@ -1,4 +1,4 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, TFile, TFolder, TAbstractFile } from 'obsidian';
+import { App, Modal, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, TFile, TFolder, TAbstractFile } from 'obsidian';
 import { FileBrowserView } from './FileBrowserView';
 import { FolgemoveModal } from './FolgemoveModal';
 import { FollowUpModal } from './FollowUpModal';
@@ -88,7 +88,7 @@ interface IMMSPlugin {
     settings: MMSPluginSettings;
     app: App;
     createFollowUpNote: (item: TAbstractFile) => void;
-    folgemove: (file: TFile, targetPath: string) => void;
+    folgemove: (file: TAbstractFile, targetPath: string) => Promise<void>;
     openMarimoNotebook: (file: TFile) => void;
     openRemoteMarimoNotebook: (file: TFile, node: GraphNode) => void;
     executeDefaultPythonCommand: (file: TFile) => void;
@@ -141,7 +141,9 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             }
         );
 
-        // Register file system event handlers with debounced graph update
+        // Register file system event handlers with debounced graph update.
+        // Views re-render via their graph-update subscription, so updateGraph()
+        // alone is enough — calling refreshViews() here too rendered every view twice.
         let updateTimeout: NodeJS.Timeout | null = null;
         const debouncedUpdate = () => {
             if (updateTimeout) {
@@ -149,7 +151,6 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             }
             updateTimeout = setTimeout(() => {
                 this.updateGraph();
-                this.refreshViews();
             }, 100); // Debounce graph updates
         };
 
@@ -198,55 +199,6 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         // Automatically open the file browser view
         this.app.workspace.onLayoutReady(() => {
             this.activateView();
-        });
-
-        // This creates an icon in the left ribbon.
-        const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-            // Called when the user clicks the icon.
-            new Notice('This is a notice!');
-        });
-        // Perform additional things with the ribbon
-        ribbonIconEl.addClass('my-plugin-ribbon-class');
-
-        // This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-        const statusBarItemEl = this.addStatusBarItem();
-        statusBarItemEl.setText('Status Bar Text');
-
-        // This adds a simple command that can be triggered anywhere
-        this.addCommand({
-            id: 'open-sample-modal-simple',
-            name: 'Open sample modal (simple)',
-            callback: () => {
-                new SampleModal(this.app).open();
-            }
-        });
-        // This adds an editor command that can perform some operation on the current editor instance
-        this.addCommand({
-            id: 'sample-editor-command',
-            name: 'Sample editor command',
-            editorCallback: (editor: Editor, view: MarkdownView) => {
-                console.log(editor.getSelection());
-                editor.replaceSelection('Sample Editor Command');
-            }
-        });
-        // This adds a complex command that can check whether the current state of the app allows execution of the command
-        this.addCommand({
-            id: 'open-sample-modal-complex',
-            name: 'Open sample modal (complex)',
-            checkCallback: (checking: boolean) => {
-                // Conditions to check
-                const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-                if (markdownView) {
-                    // If checking is true, we're simply "checking" if the command can be run.
-                    // If checking is false, then we want to actually perform the operation.
-                    if (!checking) {
-                        new SampleModal(this.app).open();
-                    }
-
-                    // This command will only show up in Command Palette when the check function returns true
-                    return true;
-                }
-            }
         });
 
         // Add Folgemove command
@@ -423,40 +375,20 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
 
         // This adds a settings tab so the user can configure various aspects of the plugin
         this.addSettingTab(new MMSSettingTab(this.app, this));
-
-        // If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-        // Using this function will automatically remove the event listener when this plugin is disabled.
-        this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-            console.log('click', evt);
-        });
-
-        // When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-        this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
     }
 
     onunload() {
-        // Clean up views
-        console.log(`[MMS] Cleaning up ${this.views.length} Folgezettel Browser views`);
-        
-        // Make a copy of the views array since we'll be modifying it during iteration
-        const viewsToClean = [...this.views];
-        
-        for (const view of viewsToClean) {
-            if (view && view.leaf) {
-                console.log('[MMS] Detaching view:', view.getDisplayText());
-                view.leaf.detach();
-            }
-        }
-        
+        // Note: deliberately NOT detaching our leaves here — the workspace cleans
+        // them up itself, and detaching in onunload destroys the user's layout on
+        // every plugin update (see Obsidian plugin guidelines).
         this.views = [];
-        
+
         // Shut down all Marimo servers
         this.shutdownAllMarimoServers();
     }
 
     async loadSettings() {
         this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-        console.log('Loaded settings:', this.settings);
         // Apply font size setting
         this.updateFolgezettelBrowserFontSize();
     }
@@ -503,13 +435,10 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         return this.views.find(view => view.leaf === leaf) || this.views[0];
     }
 
-    // Method to refresh all file browser views while preserving state
-    private refreshViews() {
-        this.views.forEach(view => {
-            if (view) {
-                view.refreshPreservingState();
-            }
-        });
+    // Method for views to deregister themselves when they close, so the views
+    // array doesn't accumulate dead references across open/close cycles
+    public unregisterView(view: FileBrowserView) {
+        this.views = this.views.filter(v => v !== view);
     }
 
     // Method to update the central graph and notify subscribers
@@ -545,21 +474,41 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         return this.fileGraph!;
     }
 
-    // Method to wait for graph update to complete
+    // Method to wait for the NEXT graph rebuild to complete.
+    // Note: this deliberately adds the callback directly instead of going through
+    // subscribeToGraphUpdates(), because that method immediately fires the callback
+    // with the CURRENT graph — which made every waiter resolve instantly with stale
+    // data (the root cause of Folgemove operating on pre-rename state).
     private async waitForGraphUpdate(timeout = 2000): Promise<void> {
         return new Promise((resolve, reject) => {
-            const timeoutId = setTimeout(() => {
-                reject(new Error('Timeout waiting for graph update'));
-            }, timeout);
-
-            const callback = (graph: FileGraph) => {
+            const callback = () => {
                 clearTimeout(timeoutId);
-                this.unsubscribeFromGraphUpdates(callback);
+                this.graphUpdateCallbacks.delete(callback);
                 resolve();
             };
 
-            this.subscribeToGraphUpdates(callback);
+            const timeoutId = setTimeout(() => {
+                this.graphUpdateCallbacks.delete(callback);
+                reject(new Error('Timeout waiting for graph update'));
+            }, timeout);
+
+            this.graphUpdateCallbacks.add(callback);
         });
+    }
+
+    // Collect the primary paths of a node and all its descendants (via graph edges)
+    private getDescendantPaths(startPath: string, graph: FileGraph): Set<string> {
+        const result = new Set<string>();
+        const queue = [startPath];
+        while (queue.length > 0) {
+            const current = queue.pop()!;
+            if (result.has(current)) continue;
+            result.add(current);
+            for (const child of graph.edges.get(current) || []) {
+                queue.push(child);
+            }
+        }
+        return result;
     }
 
     async folgemove(source: TAbstractFile, targetPath: string) {
@@ -571,6 +520,16 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             const targetNode = graph.nodes.get(targetPath);
             if (!targetNode) {
                 throw new Error(`Target node ${targetPath} not found in graph`);
+            }
+
+            // Refuse to move a node into itself or its own subtree — the recursive
+            // child-move would otherwise chase its own tail and corrupt IDs
+            const sourceNode = graph.nodes.get(source.path);
+            const sourcePrimaryPath = sourceNode?.path ?? source.path;
+            const subtree = this.getDescendantPaths(sourcePrimaryPath, graph);
+            if (subtree.has(targetNode.path) || sourceNode === targetNode) {
+                new Notice('Cannot move a note into itself or its own descendants');
+                return;
             }
 
             // Get all children BEFORE moving the source node
@@ -667,7 +626,11 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         console.log(`[GetChildren] Finding children of ${sourcePath}`);
         const graph = this.getActiveGraph();
         const children: TAbstractFile[] = [];
-        const childPaths = graph.edges.get(sourcePath) || new Set<string>();
+        // Edges are keyed by a node's PRIMARY path. If sourcePath is an alias
+        // (e.g. the .py variant of a .md+.py node), resolve it first — looking up
+        // edges by the alias silently returned no children.
+        const primaryPath = graph.nodes.get(sourcePath)?.path ?? sourcePath;
+        const childPaths = graph.edges.get(primaryPath) || new Set<string>();
         console.log(`[GetChildren] Found edges:`, Array.from(childPaths));
 
         for (const childPath of childPaths) {
@@ -1039,8 +1002,9 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
                     }
 
                     try {
-                        // First, check if remote file is newer
-                        const checkCommand = `ssh -i "${escapedKeyPath}" ${this.settings.marimoRemoteUser}@${this.settings.marimoRemoteHost} "stat -f %m ${remotePath}"`;
+                        // First, check if remote file is newer.
+                        // GNU stat (-c %Y) on Linux remotes, BSD stat (-f %m) on macOS.
+                        const checkCommand = `ssh -i "${escapedKeyPath}" ${this.settings.marimoRemoteUser}@${this.settings.marimoRemoteHost} "stat -c %Y ${remotePath} 2>/dev/null || stat -f %m ${remotePath}"`;
                         const remoteTimestamp = await new Promise<number>((resolve, reject) => {
                             exec(checkCommand, (error: any, stdout: string) => {
                                 if (error) {
@@ -1178,18 +1142,8 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
     }
 
     async renameFileWithExtensions(file: TFile, newName: string) {
-        // Get the file graph from the active view
-        const activeView = this.views[0];
-        if (!activeView) {
-            new Notice('File browser view not found');
-            return;
-        }
-
-        const fileGraph = activeView.getCurrentGraph();
-        if (!fileGraph) {
-            new Notice('File graph not found');
-            return;
-        }
+        // Use the central graph — this must not depend on a browser view being open
+        const fileGraph = this.getActiveGraph();
 
         const node = fileGraph.nodes.get(file.path);
         if (!node) {
@@ -1225,9 +1179,7 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             }
         }
 
-        // Trigger a refresh of the file browser view
-        activeView.refreshPreservingState();
-
+        // Views refresh automatically via the rename events' graph rebuild
         new Notice(`Successfully renamed ${filesToRename.length} files`);
     }
     
@@ -1240,22 +1192,23 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             return;
         }
         
-        // Get the file path
-        const filePath = file.path;
-        
         // Get the graph
         const graph = this.getActiveGraph();
         if (!graph) {
             new Notice('File graph not available');
             return;
         }
-        
+
         // Ensure the file exists in the graph
-        const node = graph.nodes.get(filePath);
+        const node = graph.nodes.get(file.path);
         if (!node) {
-            new Notice(`File ${filePath} not found in the graph`);
+            new Notice(`File ${file.path} not found in the graph`);
             return;
         }
+
+        // Use the node's primary path: the tree renders (and edges are keyed by)
+        // primary paths, so revealing an alias path would neither expand nor select
+        const filePath = node.path;
         
         // Find all parent paths that need to be expanded
         const parentsToExpand = new Set<string>();
@@ -1353,22 +1306,6 @@ class MarimoLinkModal extends Modal {
 
     onClose() {
         const {contentEl} = this;
-        contentEl.empty();
-    }
-}
-
-class SampleModal extends Modal {
-    constructor(app: App) {
-        super(app);
-    }
-
-    onOpen() {
-        const { contentEl } = this;
-        contentEl.setText('Woah!');
-    }
-
-    onClose() {
-        const { contentEl } = this;
         contentEl.empty();
     }
 }

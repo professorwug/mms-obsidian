@@ -25,7 +25,7 @@ interface IMMSPlugin {
     settings: MMSPluginSettings;
     app: App;
     createFollowUpNote: (item: TAbstractFile) => void;
-    folgemove: (file: TFile, targetPath: string) => void;
+    folgemove: (file: TAbstractFile, targetPath: string) => Promise<void>;
     openMarimoNotebook: (file: TFile) => void;
     openRemoteMarimoNotebook: (file: TFile, node: GraphNode) => void;
     executeDefaultPythonCommand: (file: TFile) => void;
@@ -140,22 +140,6 @@ const FileItem: React.FC<FileItemProps> = ({
                 return;
             }
             
-            console.log('Main item clicked:', path);
-            console.log('Node details:', JSON.stringify({
-                path,
-                node: graph.nodes.get(path),
-                hasChildren,
-                children
-            }, (key, value) => {
-                if (value instanceof Set) {
-                    return Array.from(value);
-                }
-                if (key === 'paths' || key === 'extensions') {
-                    return Array.from(value || []);
-                }
-                return value;
-            }, 2));
-            
             e.stopPropagation();
             onSelect(path, e.ctrlKey || e.metaKey);
             
@@ -170,7 +154,6 @@ const FileItem: React.FC<FileItemProps> = ({
         if (isMobileApp()) {
             // If this node has children, toggle expansion
             if (hasChildren) {
-                console.log('Node has children, toggling expansion');
                 try {
                     onToggle(path);
                 } catch (error) {
@@ -190,7 +173,6 @@ const FileItem: React.FC<FileItemProps> = ({
         }
         // On desktop, just toggle expansion if there are children
         else if (hasChildren) {
-            console.log('Node has children, toggling expansion');
             try {
                 onToggle(path);
             } catch (error) {
@@ -200,19 +182,16 @@ const FileItem: React.FC<FileItemProps> = ({
         } 
         // If the node has no children and is not a directory, open it on single click
         else if (!node.isDirectory && !node.isSurrogate) {
-            console.log('Node has no children, opening file on single click');
             // For files with multiple extensions, prefer .md, otherwise use the first path
             if (node.extensions && node.extensions.size > 0 && node.paths && node.paths.size > 0) {
                 try {
                     const mdPath = Array.from(node.paths).find(p => p && typeof p === 'string' && p.toLowerCase().endsWith('.md'));
-                    console.log('Looking for preferred .md file:', mdPath);
                     
                     if (mdPath) {
                         onFileClick(mdPath);
                     } else {
                         const firstPath = Array.from(node.paths)[0];
                         if (firstPath) {
-                            console.log('No .md file found, using first path:', firstPath);
                             onFileClick(firstPath);
                         } else {
                             console.error('No valid path found for node:', path);
@@ -232,8 +211,6 @@ const FileItem: React.FC<FileItemProps> = ({
         // For surrogate nodes, create a new markdown file
         if (node.isSurrogate && node.id && node.id.trim() !== '') {
             try {
-                console.log('Creating new file for surrogate node:', node.id);
-                console.log('Node path:', path);
 
                 // Store the expansion state of the surrogate node before creating the placeholder
                 const wasExpanded = expandedPaths.has(path);
@@ -244,7 +221,6 @@ const FileItem: React.FC<FileItemProps> = ({
                     visited.add(nodePath);
 
                     const childPaths = Array.from(graph.edges.get(nodePath) || []);
-                    console.log('Checking children of:', nodePath, childPaths);
 
                     for (const childPath of childPaths) {
                         if (!childPath) continue;
@@ -259,7 +235,6 @@ const FileItem: React.FC<FileItemProps> = ({
                             const actualPath = nodePaths[0];
                             if (!actualPath) continue;
                             
-                            console.log('Found non-surrogate child:', actualPath);
                             return actualPath;
                         } else {
                             // Recursively check this surrogate's children
@@ -279,14 +254,11 @@ const FileItem: React.FC<FileItemProps> = ({
 
                 const pathParts = actualChildPath.split('/');
                 const targetDir = pathParts.length > 1 ? pathParts.slice(0, -1).join('/') : '';
-                console.log('Using directory from non-surrogate child:', targetDir);
 
                 const newFilePath = targetDir ? `${targetDir}/${node.id} Placeholder.md` : `${node.id} Placeholder.md`;
-                console.log('Creating file at:', newFilePath);
                 
                 try {
                     await plugin.app.vault.create(newFilePath, '');
-                    console.log('Created new file:', newFilePath);
 
                     // If the surrogate was expanded, expand the new placeholder file
                     // We need to wait a moment for the file system event to trigger and the graph to update
@@ -329,7 +301,6 @@ const FileItem: React.FC<FileItemProps> = ({
     // Add double click handler to open files
     const handleDoubleClick = async (e: React.MouseEvent) => {
         try {
-            console.log('Node double-clicked:', path);
             e.stopPropagation();
             
             const node = graph.nodes.get(path);
@@ -345,14 +316,12 @@ const FileItem: React.FC<FileItemProps> = ({
             if (node.extensions && node.extensions.size > 0 && node.paths && node.paths.size > 0) {
                 try {
                     const mdPath = Array.from(node.paths).find(p => p && typeof p === 'string' && p.toLowerCase().endsWith('.md'));
-                    console.log('Looking for preferred .md file:', mdPath);
                     
                     if (mdPath) {
                         onFileClick(mdPath);
                     } else {
                         const firstPath = Array.from(node.paths)[0];
                         if (firstPath) {
-                            console.log('No .md file found, using first path:', firstPath);
                             onFileClick(firstPath);
                         } else {
                             console.error('No valid path found for node:', path);
@@ -506,13 +475,15 @@ const FileItem: React.FC<FileItemProps> = ({
                 item
                     .setTitle("Move with Children")
                     .setIcon("folder-move")
-                    .onClick(() => {
+                    .onClick(async () => {
                         try {
                             const file = app.vault.getAbstractFileByPath(path);
-                            if (file) {
-                                const modal = new FolgemoveModal(app);
-                                modal.open();
-                            }
+                            if (!file) return;
+                            const modal = new FolgemoveModal(app);
+                            modal.open();
+                            const target = await modal.getResult();
+                            if (!target) return; // User cancelled
+                            await plugin.folgemove(file, target.path);
                         } catch (error) {
                             console.error('Error with folgemove:', error);
                             new Notice(`Error with folgemove: ${error.message || 'Unknown error'}`);
@@ -533,7 +504,6 @@ const FileItem: React.FC<FileItemProps> = ({
 
     const handleExtensionClick = (e: React.MouseEvent, ext: string) => {
         try {
-            console.log('Extension click handler start:', ext);
             e.stopPropagation();
             e.preventDefault();
             
@@ -550,9 +520,7 @@ const FileItem: React.FC<FileItemProps> = ({
                 return;
             }
 
-            console.log('Node paths:', Array.from(node.paths));
             const extPath = Array.from(node.paths).find(p => p && typeof p === 'string' && p.toLowerCase().endsWith(`.${ext}`));
-            console.log('Found path for extension:', extPath);
             
             if (extPath) {
                 try {
@@ -653,7 +621,6 @@ const FileItem: React.FC<FileItemProps> = ({
                                 <div 
                                     className={`file-extensions ${isMobileApp() ? 'mobile-extensions' : ''}`}
                                     onClick={(e) => {
-                                        console.log('Extensions container clicked');
                                         e.stopPropagation();
                                         e.preventDefault();
                                     }}
@@ -804,8 +771,6 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
 
     // Update state when props change
     React.useEffect(() => {
-        console.log('[FileBrowserComponent] Received new initialExpandedPaths:', Array.from(initialExpandedPaths));
-        console.log('[FileBrowserComponent] Received new initialSelectedPath:', initialSelectedPath);
         setExpandedPaths(initialExpandedPaths);
         setSelectedPath(initialSelectedPath);
         if (initialSelectedPath) {
@@ -1027,51 +992,43 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         const idChanges = generateSiblingIds(parentPath, orderedSiblings, graph);
         
         // Prepare batch of rename operations for direct siblings
-        const directRenameOperations = [];
-        
+        const directRenameOperations: { file: TFile, oldId: string, newId: string }[] = [];
+
         // Prepare batch of rename operations for ALL descendants (collect before any renames)
-        const childRenameOperations = [];
-        
-        // Prepare rename operations for each changed ID
-        for (const [oldId, newId] of idChanges.entries()) {
-            // Find the node(s) with this ID (direct siblings)
-            for (const [nodePath, node] of graph.nodes.entries()) {
+        const childRenameOperations: { file: TFile, oldId: string, newId: string }[] = [];
+
+        // Walk each unique node exactly once. The nodes map contains one entry per
+        // PATH, so multi-extension nodes appear multiple times — and each rename op
+        // goes through renameFileWithExtensions, which renames every extension
+        // variant in one call. Without dedup a .md+.py node got renamed twice (the
+        // second time against already-renamed files), which is what made reordering
+        // intermittently corrupt names.
+        const seenNodes = new Set<GraphNode>();
+        for (const node of graph.nodes.values()) {
+            if (!node.id || node.isSurrogate || seenNodes.has(node)) continue;
+            seenNodes.add(node);
+
+            for (const [oldId, newId] of idChanges.entries()) {
+                let newNodeId: string | null = null;
                 if (node.id === oldId) {
-                    // For each file in the node, prepare a rename
-                    for (const path of node.paths) {
-                        const file = app.vault.getAbstractFileByPath(path);
-                        if (file instanceof TFile) {
-                            directRenameOperations.push({
-                                file,
-                                oldId,
-                                newId
-                            });
-                        }
-                    }
+                    newNodeId = newId;
+                } else if (node.id.startsWith(oldId)) {
+                    // Descendant: swap the prefix (plain string ops — IDs can end in
+                    // regex metacharacters like $ or ^, so no RegExp here)
+                    newNodeId = newId + node.id.slice(oldId.length);
                 }
-            }
-            
-            // Also collect ALL descendants of this node (before any renames happen)
-            for (const [nodePath, node] of graph.nodes.entries()) {
-                if (!node.id) continue;
-                
-                // Check if this is a descendant of the changed node
-                if (node.id !== oldId && node.id.startsWith(oldId)) {
-                    // Generate the new descendant ID by replacing the prefix
-                    const newDescendantId = node.id.replace(new RegExp(`^${oldId}`), newId);
-                    
-                    // For each file in the node, prepare a rename
-                    for (const path of node.paths) {
-                        const file = app.vault.getAbstractFileByPath(path);
-                        if (file instanceof TFile) {
-                            childRenameOperations.push({
-                                file,
-                                oldId: node.id,
-                                newId: newDescendantId
-                            });
-                        }
-                    }
+                if (newNodeId === null) continue;
+
+                // One representative file per node is enough; renameFileWithExtensions
+                // takes care of the sibling extension variants
+                const file = Array.from(node.paths)
+                    .map(p => app.vault.getAbstractFileByPath(p))
+                    .find((f): f is TFile => f instanceof TFile);
+                if (file) {
+                    const target = node.id === oldId ? directRenameOperations : childRenameOperations;
+                    target.push({ file, oldId: node.id, newId: newNodeId });
                 }
+                break; // A node can match at most one changed sibling ID
             }
         }
         
@@ -1103,31 +1060,38 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         // Track successful renames for potential rollback
         const successfulRenames = [];
         
+        // Replace the ID only when it is actually the prefix of the name — a bare
+        // .replace() hit the first occurrence anywhere in the name
+        const replaceIdPrefix = (name: string, oldId: string, newId: string): string =>
+            name.startsWith(oldId) ? newId + name.slice(oldId.length) : name;
+
         // PHASE 1: Execute all direct sibling renames first
-        console.log('Phase 1: Renaming parent nodes...');
         for (const op of directRenameOperations) {
-            // Get the file name without the ID
             const { file, oldId, newId } = op;
             const oldName = file.basename;
-            
-            // Replace just the ID part
-            const newName = oldName.replace(oldId, newId);
-            
+            const newName = replaceIdPrefix(oldName, oldId, newId);
+
             // Skip if name hasn't changed
             if (oldName === newName) continue;
-            
+
             try {
                 await (plugin as MMSPlugin).renameFileWithExtensions(file, newName);
                 successfulRenames.push({ oldPath: file.path, newName, oldName });
-                console.log(`Renamed parent: ${oldName} → ${newName}`);
             } catch (error) {
                 console.error(`Failed to rename ${file.path}:`, error);
-                
+
                 // Try to rollback successful renames
                 new Notice(`Error during rename operation. Attempting to rollback...`);
                 for (const rollbackOp of successfulRenames.reverse()) {
                     try {
-                        const fileToRollback = app.vault.getAbstractFileByPath(rollbackOp.oldPath.replace(rollbackOp.oldName, rollbackOp.newName));
+                        // Reconstruct the renamed file's path from directory + new
+                        // basename; replacing the basename substring inside the full
+                        // path could hit a same-named folder segment instead
+                        const lastSlash = rollbackOp.oldPath.lastIndexOf('/');
+                        const dir = rollbackOp.oldPath.substring(0, lastSlash + 1);
+                        const oldFileName = rollbackOp.oldPath.substring(lastSlash + 1);
+                        const ext = oldFileName.substring(oldFileName.lastIndexOf('.'));
+                        const fileToRollback = app.vault.getAbstractFileByPath(dir + rollbackOp.newName + ext);
                         if (fileToRollback instanceof TFile) {
                             await (plugin as MMSPlugin).renameFileWithExtensions(fileToRollback, rollbackOp.oldName);
                         }
@@ -1135,33 +1099,31 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                         console.error(`Failed to rollback ${rollbackOp.oldPath}:`, rollbackError);
                     }
                 }
-                
+
                 throw error; // Re-throw to be caught by the caller
             }
         }
-        
+
         // PHASE 2: Execute all child renames
         if (childRenameOperations.length > 0) {
-            console.log(`Phase 2: Renaming ${childRenameOperations.length} child nodes...`);
             new Notice(`Phase 2: Updating ${childRenameOperations.length} child nodes...`);
-            
+
             for (const op of childRenameOperations) {
                 const { file, oldId, newId } = op;
                 const oldName = file.basename;
-                const newName = oldName.replace(oldId, newId);
-                
+                const newName = replaceIdPrefix(oldName, oldId, newId);
+
                 if (oldName === newName) continue;
-                
+
                 try {
                     await (plugin as MMSPlugin).renameFileWithExtensions(file, newName);
-                    console.log(`Renamed child: ${oldName} → ${newName}`);
                 } catch (error) {
                     console.error(`Failed to rename child ${file.path}:`, error);
                     // Continue with other child renames even if one fails
                     new Notice(`Warning: Failed to rename child file ${file.path}`);
                 }
             }
-            
+
             new Notice(`Successfully updated ${childRenameOperations.length} child nodes`);
         }
     };
@@ -1246,23 +1208,18 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         // Skip if we're dragging
         if (isDragging) return;
         
-        console.log('File click handler called with path:', path);
         const node = graph.nodes.get(path);
         if (!node || node.isDirectory) {
-            console.log('Invalid node or directory, ignoring click');
             return;
         }
 
         // Use the exact path that was passed in
         const extension = path.split('.').pop()?.toLowerCase();
         if (!extension) {
-            console.log('No extension found');
             return;
         }
 
-        console.log('Processing file with extension:', extension);
         const command = plugin.settings.fileTypeCommands[extension];
-        console.log('Found command from settings:', command);
         
         // Ignore Python files on direct click - they must be opened via context menu
         if (extension === 'py') {
@@ -1271,7 +1228,6 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         
         if (extension === 'md' || extension === 'pdf' || (!command && extension !== 'html')) {
             // Default behavior: open in Obsidian in a new tab
-            console.log('Opening in Obsidian:', path);
             
             // Mark that this file is being opened from the browser
             (plugin as MMSPlugin).setFileOpenSource('browser');
@@ -1290,20 +1246,17 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
 
             if (plugin.settings.htmlBehavior === 'obsidian' || isMobileApp()) {
                 // Open in Obsidian by simulating a link click
-                console.log('Opening HTML file in Obsidian via link:', path);
                 await app.workspace.openLinkText(file.path, '', true, { active: true });
             } else {
-                // Open in default browser (desktop only)
+                // Open in default browser (desktop only) — shell.openPath works on
+                // every platform, unlike shelling out to the macOS-only `open`
                 try {
                     const absolutePath = (app.vault.adapter as any).basePath;
                     const filePath = require('path').resolve(absolutePath, file.path);
-                    const { exec } = require('child_process');
-                    exec(`open "${filePath}"`, (error: any) => {
-                        if (error) {
-                            console.error('Error opening HTML file:', error);
-                            new Notice(`Error opening HTML file: ${error.message}`);
-                        }
-                    });
+                    const openError = await require('electron').shell.openPath(filePath);
+                    if (openError) {
+                        throw new Error(openError);
+                    }
                 } catch (error) {
                     console.error('Error opening HTML file:', error);
                     new Notice(`Unable to open in browser: ${error.message}`);
@@ -1334,14 +1287,11 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                 try {
                     // Get the absolute path by combining vault path with file path
                     const absolutePath = getPlatformAppropriateFilePath(file.path, app);
-                    console.log('Converting to absolute path:', absolutePath);
 
                     // Run the configured command with absolute path
                     const finalCommand = command.replace('$FILEPATH', `"${absolutePath}"`);
-                    console.log('Running command:', finalCommand);
                     
                     await executeCommand(finalCommand, app, file.path);
-                    console.log('Command executed successfully');
                 } catch (error) {
                     console.error('Command error:', error);
                     new Notice(`Error running command: ${error.message}`);
@@ -1561,6 +1511,8 @@ export class FileBrowserView extends ItemView {
             this.root.unmount();
             this.root = null;
         }
+
+        (this.plugin as MMSPlugin).unregisterView(this);
     }
 
     getCurrentGraph(): FileGraph | null {
