@@ -94,7 +94,7 @@ interface IMMSPlugin {
     openMarimoNotebook: (file: TFile) => void;
     openRemoteMarimoNotebook: (file: TFile, node: GraphNode) => void;
     executeDefaultPythonCommand: (file: TFile) => void;
-    renameFileWithExtensions: (file: TFile, newName: string) => Promise<void>;
+    renameFileWithExtensions: (file: TFile, newName: string, silent?: boolean) => Promise<void>;
 }
 
 export default class MMSPlugin extends Plugin implements IMMSPlugin {
@@ -1209,7 +1209,7 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         }
     }
 
-    async renameFileWithExtensions(file: TFile, newName: string) {
+    async renameFileWithExtensions(file: TFile, newName: string, silent = false) {
         // Use the central graph — this must not depend on a browser view being open
         const fileGraph = this.getActiveGraph();
 
@@ -1248,7 +1248,9 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         }
 
         // Views refresh automatically via the rename events' graph rebuild
-        new Notice(`Successfully renamed ${filesToRename.length} files`);
+        if (!silent) {
+            new Notice(`Successfully renamed ${filesToRename.length} files`);
+        }
     }
     
     async revealFileInFolgezettelBrowser(file: TFile) {

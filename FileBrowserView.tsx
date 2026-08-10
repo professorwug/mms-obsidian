@@ -5,7 +5,7 @@ import { buildFileGraph, FileGraph, GraphNode, isValidNodeId, getParentId } from
 import MMSPlugin from './main';
 import { FolgemoveModal } from './FolgemoveModal';
 import { RenameModal } from './RenameModal';
-import { isMobileApp, getPlatformAppropriateFilePath, executeCommand, getNextAvailableChildId } from './utils';
+import { isMobileApp, getPlatformAppropriateFilePath, executeCommand, getNextAvailableChildId, openOrFocusFile } from './utils';
 
 interface FileTypeCommands {
     [key: string]: string;
@@ -29,7 +29,7 @@ interface IMMSPlugin {
     openMarimoNotebook: (file: TFile) => void;
     openRemoteMarimoNotebook: (file: TFile, node: GraphNode) => void;
     executeDefaultPythonCommand: (file: TFile) => void;
-    renameFileWithExtensions: (file: TFile, newName: string) => Promise<void>;
+    renameFileWithExtensions: (file: TFile, newName: string, silent?: boolean) => Promise<void>;
 }
 
 interface FileItemProps {
@@ -1053,10 +1053,16 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
             throw new Error(`Cannot proceed: ${missingFiles.length} files no longer exist: ${missingFiles.join(', ')}`);
         }
         
-        // Show initial notification
+        // Single sticky progress notice, updated in place — reorder cascades used
+        // to fire a separate Notice per file, which buried the workspace in toasts
         const totalOperations = directRenameOperations.length + childRenameOperations.length;
-        new Notice(`Reordering ${directRenameOperations.length} nodes and updating ${childRenameOperations.length} children (${totalOperations} total files)...`);
-        
+        let completedOperations = 0;
+        const progress = new Notice(`Reordering: 0/${totalOperations} files renamed…`, 0);
+        const tickProgress = () => {
+            completedOperations++;
+            progress.setMessage(`Reordering: ${completedOperations}/${totalOperations} files renamed…`);
+        };
+
         // Track successful renames for potential rollback
         const successfulRenames = [];
         
@@ -1072,13 +1078,15 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
             const newName = replaceIdPrefix(oldName, oldId, newId);
 
             // Skip if name hasn't changed
-            if (oldName === newName) continue;
+            if (oldName === newName) { tickProgress(); continue; }
 
             try {
-                await (plugin as MMSPlugin).renameFileWithExtensions(file, newName);
+                await (plugin as MMSPlugin).renameFileWithExtensions(file, newName, true);
                 successfulRenames.push({ oldPath: file.path, newName, oldName });
+                tickProgress();
             } catch (error) {
                 console.error(`Failed to rename ${file.path}:`, error);
+                progress.hide();
 
                 // Try to rollback successful renames
                 new Notice(`Error during rename operation. Attempting to rollback...`);
@@ -1105,27 +1113,25 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         }
 
         // PHASE 2: Execute all child renames
-        if (childRenameOperations.length > 0) {
-            new Notice(`Phase 2: Updating ${childRenameOperations.length} child nodes...`);
+        for (const op of childRenameOperations) {
+            const { file, oldId, newId } = op;
+            const oldName = file.basename;
+            const newName = replaceIdPrefix(oldName, oldId, newId);
 
-            for (const op of childRenameOperations) {
-                const { file, oldId, newId } = op;
-                const oldName = file.basename;
-                const newName = replaceIdPrefix(oldName, oldId, newId);
+            if (oldName === newName) { tickProgress(); continue; }
 
-                if (oldName === newName) continue;
-
-                try {
-                    await (plugin as MMSPlugin).renameFileWithExtensions(file, newName);
-                } catch (error) {
-                    console.error(`Failed to rename child ${file.path}:`, error);
-                    // Continue with other child renames even if one fails
-                    new Notice(`Warning: Failed to rename child file ${file.path}`);
-                }
+            try {
+                await (plugin as MMSPlugin).renameFileWithExtensions(file, newName, true);
+                tickProgress();
+            } catch (error) {
+                console.error(`Failed to rename child ${file.path}:`, error);
+                // Continue with other child renames even if one fails
+                new Notice(`Warning: Failed to rename child file ${file.path}`);
+                tickProgress();
             }
-
-            new Notice(`Successfully updated ${childRenameOperations.length} child nodes`);
         }
+
+        progress.hide();
     };
     
     // Generate sibling IDs following the correct Folgezettel pattern
@@ -1227,14 +1233,14 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         }
         
         if (extension === 'md' || extension === 'pdf' || (!command && extension !== 'html')) {
-            // Default behavior: open in Obsidian in a new tab
-            
+            // Default behavior: focus the file's existing tab, or open a new one
+
             // Mark that this file is being opened from the browser
             (plugin as MMSPlugin).setFileOpenSource('browser');
-            
+
             const file = app.vault.getAbstractFileByPath(path);
             if (file instanceof TFile) {
-                await app.workspace.getLeaf('tab').openFile(file);
+                await openOrFocusFile(app, file);
             }
         } else if (extension === 'html') {
             // Handle HTML files according to settings
@@ -1278,7 +1284,7 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                 // On mobile, just open the file in Obsidian if possible
                 new Notice('Custom commands are not supported on mobile. Opening file in Obsidian if possible.');
                 if (file.extension === 'md') {
-                    await app.workspace.getLeaf('tab').openFile(file);
+                    await openOrFocusFile(app, file);
                 } else {
                     await app.workspace.openLinkText(file.path, '', true, { active: true });
                 }

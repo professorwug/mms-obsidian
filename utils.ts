@@ -1,5 +1,28 @@
 import { FileGraph } from './FileGraph';
-import { Platform, App, TFile } from 'obsidian';
+import { Platform, App, TFile, WorkspaceLeaf } from 'obsidian';
+
+/**
+ * Open a file in a new tab — unless it is already open in some leaf, in which
+ * case that leaf is revealed and focused instead of opening a duplicate.
+ */
+export async function openOrFocusFile(app: App, file: TFile): Promise<void> {
+    let existing: WorkspaceLeaf | null = null;
+    app.workspace.iterateAllLeaves(leaf => {
+        if (existing) return;
+        // getViewState covers deferred (not-yet-loaded) views too
+        const state = leaf.getViewState();
+        if (state?.state?.file === file.path) {
+            existing = leaf;
+        }
+    });
+
+    if (existing) {
+        app.workspace.revealLeaf(existing);
+        app.workspace.setActiveLeaf(existing, { focus: true });
+        return;
+    }
+    await app.workspace.getLeaf('tab').openFile(file);
+}
 
 /**
  * Checks if the plugin is running on a mobile device
