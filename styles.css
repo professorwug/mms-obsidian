@@ -433,3 +433,54 @@ If your plugin does not need CSS, delete this file.
     0%, 100% { transform: translateY(0); }
     50% { transform: translateY(-2px); }
 }
+
+/* Recently edited folgezettel files box */
+.mms-recents {
+    border-bottom: 1px solid var(--background-modifier-border);
+    padding: 2px 0 4px 0;
+    flex-shrink: 0;
+}
+
+.mms-recents-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    cursor: pointer;
+    user-select: none;
+    color: var(--text-muted);
+    font-size: calc(var(--mms-browser-font-size, 14px) * 0.9);
+    font-weight: 600;
+}
+
+.mms-recents-header:hover {
+    color: var(--text-normal);
+}
+
+.mms-recents-header .collapse-icon {
+    display: inline-block;
+    transition: transform 100ms ease-in-out;
+}
+
+.mms-recents-header .collapse-icon.expanded {
+    transform: rotate(90deg);
+}
+
+.mms-recents-list {
+    padding: 0 8px 2px 20px;
+}
+
+.mms-recents-item {
+    padding: 1px 4px;
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: var(--mms-browser-font-size, 14px);
+    color: var(--text-normal);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mms-recents-item:hover {
+    background-color: var(--background-modifier-hover);
+}

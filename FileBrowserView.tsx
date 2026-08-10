@@ -32,11 +32,25 @@ interface IMMSPlugin {
     renameFileWithExtensions: (file: TFile, newName: string, silent?: boolean) => Promise<void>;
 }
 
+/**
+ * Children of a node as shown in the browser: excludes the root marker, and —
+ * when a root folder is configured — folders without folgezettel IDs.
+ */
+function visibleChildren(graph: FileGraph, path: string, hideNonIdFolders: boolean): string[] {
+    return Array.from(graph.edges.get(path) || []).filter(childPath => {
+        if (childPath === '/') return false;
+        if (!hideNonIdFolders) return true;
+        const node = graph.nodes.get(childPath);
+        return !(node?.isDirectory && !node.id);
+    });
+}
+
 interface FileItemProps {
     path: string;
     depth: number;
     children: string[];
     graph: FileGraph;
+    hideNonIdFolders: boolean;
     onToggle: (path: string) => void;
     expandedPaths: Set<string>;
     selectedPath: string | null;
@@ -58,11 +72,12 @@ interface FileItemProps {
     fileItemRefs?: React.MutableRefObject<Map<string, HTMLDivElement>>;
 }
 
-const FileItem: React.FC<FileItemProps> = ({ 
-    path, 
-    depth, 
-    children, 
-    graph, 
+const FileItem: React.FC<FileItemProps> = ({
+    path,
+    depth,
+    children,
+    graph,
+    hideNonIdFolders,
     onToggle,
     expandedPaths,
     selectedPath,
@@ -645,19 +660,18 @@ const FileItem: React.FC<FileItemProps> = ({
                     className="file-item-children"
                     style={{ '--parent-caret-position': `${depth * indentSize + 9}px` } as React.CSSProperties}
                 >
-                    {Array.from(graph.edges.get(path) || [])
-                        .filter(childPath => childPath !== '/') // Filter out the root node
+                    {visibleChildren(graph, path, hideNonIdFolders)
                         .sort((a, b) => {
                             const nodeA = graph.nodes.get(a);
                             const nodeB = graph.nodes.get(b);
                             if (!nodeA || !nodeB) return 0;
 
                             // Sort by full display name (ID + name)
-                            const displayNameA = nodeA.id ? 
-                                `${nodeA.id}${nodeA.name ? ' ' + nodeA.name : ''}` : 
+                            const displayNameA = nodeA.id ?
+                                `${nodeA.id}${nodeA.name ? ' ' + nodeA.name : ''}` :
                                 (nodeA.name || `[${a.split('/').pop() || 'Unnamed'}]`);
-                            const displayNameB = nodeB.id ? 
-                                `${nodeB.id}${nodeB.name ? ' ' + nodeB.name : ''}` : 
+                            const displayNameB = nodeB.id ?
+                                `${nodeB.id}${nodeB.name ? ' ' + nodeB.name : ''}` :
                                 (nodeB.name || `[${b.split('/').pop() || 'Unnamed'}]`);
                             return displayNameA.localeCompare(displayNameB);
                         })
@@ -665,8 +679,8 @@ const FileItem: React.FC<FileItemProps> = ({
                             const childNode = graph.nodes.get(childPath);
                             if (!childNode) return null;
 
-                            const children = Array.from(graph.edges.get(childPath) || []) as string[];
-                            
+                            const children = visibleChildren(graph, childPath, hideNonIdFolders);
+
                             return (
                                 <FileItem
                                     key={childPath}
@@ -674,6 +688,7 @@ const FileItem: React.FC<FileItemProps> = ({
                                     depth={depth + 1}
                                     children={children}
                                     graph={graph}
+                                    hideNonIdFolders={hideNonIdFolders}
                                     onToggle={onToggle}
                                     expandedPaths={expandedPaths}
                                     selectedPath={selectedPath}
@@ -1306,9 +1321,42 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
         }
     };
 
-    const rootChildren = React.useMemo(() => 
-        Array.from(graph.edges.get('/') || []) as string[], [graph]
+    // Root-folder mode: treat the configured folder as the browser root and
+    // hide folders without folgezettel IDs (they're navigation noise there)
+    const configuredRoot = (plugin as MMSPlugin).settings.browserRootPath?.trim().replace(/\/+$/, '');
+    const rootedMode = !!(configuredRoot && graph.nodes.has(configuredRoot));
+    const effectiveRoot = rootedMode ? configuredRoot : '/';
+
+    const rootChildren = React.useMemo(() =>
+        visibleChildren(graph, effectiveRoot, rootedMode)
+            .sort((a, b) => {
+                const nodeA = graph.nodes.get(a);
+                const nodeB = graph.nodes.get(b);
+                if (!nodeA || !nodeB) return 0;
+                const displayNameA = nodeA.id ? `${nodeA.id} ${nodeA.name}` : nodeA.name;
+                const displayNameB = nodeB.id ? `${nodeB.id} ${nodeB.name}` : nodeB.name;
+                return displayNameA.localeCompare(displayNameB);
+            }),
+        [graph, effectiveRoot, rootedMode]
     );
+
+    // Recently edited files with folgezettel IDs (scoped to the root folder in
+    // rooted mode), shown in a collapsed-by-default box above the tree
+    const [recentsExpanded, setRecentsExpanded] = React.useState(false);
+    const recentFiles = React.useMemo(() => {
+        return app.vault.getFiles()
+            .filter(f => {
+                if (rootedMode && !f.path.startsWith(effectiveRoot + '/')) return false;
+                const node = graph.nodes.get(f.path);
+                return !!(node?.id && !node.isSurrogate);
+            })
+            .sort((a, b) => b.stat.mtime - a.stat.mtime)
+            .slice(0, 10);
+    }, [graph, rootedMode, effectiveRoot]);
+
+    const handleRecentClick = (file: TFile) => {
+        (plugin as MMSPlugin).revealFileInFolgezettelBrowser(file);
+    };
 
     // Add mobile-specific class
     const containerClass = `file-browser-container ${isMobileApp() ? 'mobile-view' : ''}`;
@@ -1336,8 +1384,41 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                     </div>
                 </div>
             )}
-            
-            <div 
+
+            {/* Recently edited folgezettel files */}
+            {recentFiles.length > 0 && (
+                <div className="mms-recents">
+                    <div
+                        className="mms-recents-header"
+                        onClick={() => setRecentsExpanded(!recentsExpanded)}
+                    >
+                        <span className={`collapse-icon ${recentsExpanded ? 'expanded' : ''}`}>›</span>
+                        <span className="mms-recents-title">Recent</span>
+                    </div>
+                    {recentsExpanded && (
+                        <div className="mms-recents-list">
+                            {recentFiles.map(file => {
+                                const node = graph.nodes.get(file.path);
+                                const label = node?.id ?
+                                    `${node.id}${node.name ? ' ' + node.name : ''}` :
+                                    file.basename;
+                                return (
+                                    <div
+                                        key={file.path}
+                                        className="mms-recents-item"
+                                        onClick={() => handleRecentClick(file)}
+                                        title={file.path}
+                                    >
+                                        {label}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            <div
                 className="file-list"
                 onClick={(e) => {
                     // Only clear active extensions if clicking directly on the file-list (not on a child element)
@@ -1347,14 +1428,11 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                 }}
             >
                 {rootChildren.map(childPath => {
-                    // Skip the root node itself
-                    if (childPath === '/') return null;
-                    
                     const childNode = graph.nodes.get(childPath);
                     if (!childNode) return null;
 
-                    const children = Array.from(graph.edges.get(childPath) || []) as string[];
-                    
+                    const children = visibleChildren(graph, childPath, rootedMode);
+
                     return (
                         <FileItem
                             key={childPath}
@@ -1362,6 +1440,7 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                             depth={0}
                             children={children}
                             graph={graph}
+                            hideNonIdFolders={rootedMode}
                             onToggle={handleToggle}
                             expandedPaths={expandedPaths}
                             selectedPath={selectedPath}

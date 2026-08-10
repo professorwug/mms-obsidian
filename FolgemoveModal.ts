@@ -61,9 +61,9 @@ export class FolgemoveModal extends SuggestModal<ScoredItem> {
     private preparedItems: PreparedItem[];
     private emptyQueryResults: ScoredItem[];
 
-    constructor(app: App) {
+    constructor(app: App, placeholder = "Type to search for destination file or folder...") {
         super(app);
-        this.setPlaceholder("Type to search for destination file or folder...");
+        this.setPlaceholder(placeholder);
 
         // Render at most this many suggestions — the DOM was the other half of
         // the slowness when a query (or no query) matched thousands of items

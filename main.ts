@@ -4,7 +4,7 @@ import { FolgemoveModal } from './FolgemoveModal';
 import { FollowUpModal } from './FollowUpModal';
 import { RenameModal } from './RenameModal';
 import { RenameSymbolsModal } from './RenameSymbolsModal';
-import { getNextAvailableChildId, isMobileApp, executeCommand, getPlatformAppropriateFilePath, findFilesWithProblematicSymbols, getProblematicSymbols } from './utils';
+import { getNextAvailableChildId, isMobileApp, executeCommand, getPlatformAppropriateFilePath, findFilesWithProblematicSymbols, getProblematicSymbols, openOrFocusFile } from './utils';
 import { FileGraph, buildFileGraph, GraphNode, applyFileCreate, applyFileDelete, applyFileRename, diffGraphs } from './FileGraph';
 
 // Remember to rename these classes and interfaces!
@@ -33,6 +33,7 @@ interface MMSPluginSettings {
     autoRevealFiles: boolean;
     folgezettelBrowserFontSize: number;
     useIncrementalUpdates: boolean;
+    browserRootPath: string;
 }
 
 const DEFAULT_SETTINGS: MMSPluginSettings = {
@@ -61,7 +62,8 @@ const DEFAULT_SETTINGS: MMSPluginSettings = {
     ],
     autoRevealFiles: false,
     folgezettelBrowserFontSize: 14,
-    useIncrementalUpdates: true
+    useIncrementalUpdates: true,
+    browserRootPath: ''
 }
 
 function generateRandomPort(): number {
@@ -220,6 +222,25 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             }
         });
         
+
+        // Quick-open via the MMS fuzzy search (bind a hotkey in Settings -> Hotkeys)
+        this.addCommand({
+            id: 'search-open',
+            name: 'Open file via MMS search',
+            callback: async () => {
+                const modal = new FolgemoveModal(this.app, 'Search for a file to open…');
+                modal.open();
+                const target = await modal.getResult();
+                if (!target) return; // User cancelled
+
+                if (target instanceof TFile) {
+                    await openOrFocusFile(this.app, target);
+                } else {
+                    // Folders can't be opened in an editor — reveal in the browser instead
+                    await this.revealFileInFolgezettelBrowser(target as TFile);
+                }
+            }
+        });
 
         // Add Create Follow Up Note command
         this.addCommand({
@@ -437,6 +458,12 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
     // array doesn't accumulate dead references across open/close cycles
     public unregisterView(view: FileBrowserView) {
         this.views = this.views.filter(v => v !== view);
+    }
+
+    // Re-render browser views without a graph rebuild (e.g. after a settings
+    // change that affects presentation only)
+    public refreshBrowserViews() {
+        this.views.forEach(view => view?.refreshPreservingState());
     }
 
     // ------------------------------------------------------------------
@@ -1599,6 +1626,18 @@ class MMSSettingTab extends PluginSettingTab {
                 
         // Add Browser Behavior section
         containerEl.createEl('h3', { text: 'Browser Behavior' });
+
+        new Setting(containerEl)
+            .setName('Root folder')
+            .setDesc('Treat this folder as the root of the Folgezettel Browser (e.g. the one folder organized with folgezettel IDs). Folders without folgezettel IDs are hidden while this is set. Leave empty to browse the whole vault.')
+            .addText(text => text
+                .setPlaceholder('e.g. Inergamacogna')
+                .setValue(this.plugin.settings.browserRootPath)
+                .onChange(async (value) => {
+                    this.plugin.settings.browserRootPath = value.trim().replace(/\/+$/, '');
+                    await this.plugin.saveSettings();
+                    this.plugin.refreshBrowserViews();
+                }));
 
         new Setting(containerEl)
             .setName('Auto-reveal files')
