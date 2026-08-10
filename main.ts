@@ -5,7 +5,7 @@ import { FollowUpModal } from './FollowUpModal';
 import { RenameModal } from './RenameModal';
 import { RenameSymbolsModal } from './RenameSymbolsModal';
 import { getNextAvailableChildId, isMobileApp, executeCommand, getPlatformAppropriateFilePath, findFilesWithProblematicSymbols, getProblematicSymbols } from './utils';
-import { FileGraph, buildFileGraph, GraphNode } from './FileGraph';
+import { FileGraph, buildFileGraph, GraphNode, applyFileCreate, applyFileDelete, applyFileRename, diffGraphs } from './FileGraph';
 
 // Remember to rename these classes and interfaces!
 
@@ -32,6 +32,7 @@ interface MMSPluginSettings {
     ignorePatterns: string[];
     autoRevealFiles: boolean;
     folgezettelBrowserFontSize: number;
+    useIncrementalUpdates: boolean;
 }
 
 const DEFAULT_SETTINGS: MMSPluginSettings = {
@@ -59,7 +60,8 @@ const DEFAULT_SETTINGS: MMSPluginSettings = {
         '.obsidian'     // Obsidian settings directory
     ],
     autoRevealFiles: false,
-    folgezettelBrowserFontSize: 14
+    folgezettelBrowserFontSize: 14,
+    useIncrementalUpdates: true
 }
 
 function generateRandomPort(): number {
@@ -141,27 +143,18 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             }
         );
 
-        // Register file system event handlers with debounced graph update.
-        // Views re-render via their graph-update subscription, so updateGraph()
-        // alone is enough — calling refreshViews() here too rendered every view twice.
-        let updateTimeout: NodeJS.Timeout | null = null;
-        const debouncedUpdate = () => {
-            if (updateTimeout) {
-                clearTimeout(updateTimeout);
-            }
-            updateTimeout = setTimeout(() => {
-                this.updateGraph();
-            }, 100); // Debounce graph updates
-        };
-
+        // Register file system event handlers. Events are queued and flushed on a
+        // 100ms debounce; the flush applies them incrementally to the existing
+        // graph when possible, falling back to a full rebuild otherwise.
+        // Views re-render via their graph-update subscription.
         this.registerEvent(
-            this.app.vault.on('create', debouncedUpdate)
+            this.app.vault.on('create', (file) => this.queueGraphEvent({ type: 'create', file }))
         );
         this.registerEvent(
-            this.app.vault.on('delete', debouncedUpdate)
+            this.app.vault.on('delete', (file) => this.queueGraphEvent({ type: 'delete', file, path: file.path }))
         );
         this.registerEvent(
-            this.app.vault.on('rename', debouncedUpdate)
+            this.app.vault.on('rename', (file, oldPath) => this.queueGraphEvent({ type: 'rename', file, oldPath }))
         );
         
         // Register event for file open to auto-reveal in folgezettel browser
@@ -441,16 +434,86 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
         this.views = this.views.filter(v => v !== view);
     }
 
-    // Method to update the central graph and notify subscribers
-    private updateGraph() {
+    // ------------------------------------------------------------------
+    // Graph updating: incremental application of queued vault events with
+    // full rebuild as the fallback safety net
+    // ------------------------------------------------------------------
+
+    private pendingGraphEvents: Array<{ type: 'create' | 'delete' | 'rename', file: TAbstractFile, path?: string, oldPath?: string }> = [];
+    private graphUpdateTimeout: NodeJS.Timeout | null = null;
+
+    // Observability: how updates are being served (readable via eval/console)
+    public graphStats = { incrementalBatches: 0, incrementalEvents: 0, fullRebuilds: 0, incrementalFallbacks: 0 };
+
+    private queueGraphEvent(event: { type: 'create' | 'delete' | 'rename', file: TAbstractFile, path?: string, oldPath?: string }) {
+        this.pendingGraphEvents.push(event);
+        if (this.graphUpdateTimeout) {
+            clearTimeout(this.graphUpdateTimeout);
+        }
+        this.graphUpdateTimeout = setTimeout(() => this.flushGraphEvents(), 100);
+    }
+
+    private flushGraphEvents() {
+        const events = this.pendingGraphEvents;
+        this.pendingGraphEvents = [];
+
+        // No baseline graph yet, or incremental disabled: do a full rebuild
+        if (!this.fileGraph || !this.settings.useIncrementalUpdates) {
+            this.updateGraph();
+            return;
+        }
+
+        try {
+            for (const ev of events) {
+                let handled = false;
+                if (ev.type === 'create' && ev.file instanceof TFile) {
+                    handled = applyFileCreate(this.fileGraph, ev.file);
+                } else if (ev.type === 'delete' && ev.path && ev.file instanceof TFile) {
+                    handled = applyFileDelete(this.fileGraph, ev.path, this.app);
+                } else if (ev.type === 'rename' && ev.file instanceof TFile && ev.oldPath) {
+                    handled = applyFileRename(this.fileGraph, ev.file, ev.oldPath, this.app);
+                }
+                // Folder events and anything unexpected fall back to a rebuild
+                if (!handled) {
+                    this.graphStats.incrementalFallbacks++;
+                    this.updateGraph();
+                    return;
+                }
+            }
+            this.graphStats.incrementalBatches++;
+            this.graphStats.incrementalEvents += events.length;
+
+            // Fresh object identity (same underlying maps) so React re-renders
+            this.fileGraph = { ...this.fileGraph };
+            this.graphUpdateCallbacks.forEach(callback => callback(this.fileGraph!));
+        } catch (error) {
+            console.error('[MMS] Incremental graph update failed, doing full rebuild:', error);
+            this.graphStats.incrementalFallbacks++;
+            this.updateGraph();
+        }
+    }
+
+    // Full rebuild of the central graph; notifies subscribers
+    public updateGraph() {
+        this.graphStats.fullRebuilds++;
         const files = this.app.vault.getFiles();
         const folders = this.app.vault.getAllLoadedFiles().filter(f => f instanceof TFolder) as TFolder[];
         const items = [...files, ...folders];
         const newGraph = buildFileGraph(items, this.app);
         this.fileGraph = newGraph;
-        
+
         // Notify all subscribers of the new graph
         this.graphUpdateCallbacks.forEach(callback => callback(newGraph));
+    }
+
+    // Debugging aid: compare the incrementally-maintained graph against a
+    // fresh rebuild. Returns a list of structural differences (empty = OK).
+    public verifyGraph(): string[] {
+        if (!this.fileGraph) return ['no graph built yet'];
+        const files = this.app.vault.getFiles();
+        const folders = this.app.vault.getAllLoadedFiles().filter(f => f instanceof TFolder) as TFolder[];
+        const fresh = buildFileGraph([...files, ...folders], this.app);
+        return diffGraphs(this.fileGraph, fresh);
     }
 
     // Method for views to subscribe to graph updates
@@ -1509,6 +1572,21 @@ class MMSSettingTab extends PluginSettingTab {
                         .split('\n')
                         .map(line => line.trim())
                         .filter(line => line && !line.startsWith('#'));
+                    await this.plugin.saveSettings();
+                    // Pattern changes only take effect through a full rebuild
+                    this.plugin.updateGraph();
+                }));
+
+        // Performance section
+        containerEl.createEl('h3', { text: 'Performance' });
+
+        new Setting(containerEl)
+            .setName('Incremental graph updates')
+            .setDesc('Apply file events to the existing graph instead of rebuilding it from scratch. Falls back to a full rebuild automatically when needed. Disable if the browser hierarchy ever looks wrong (and please report it!).')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.useIncrementalUpdates)
+                .onChange(async (value) => {
+                    this.plugin.settings.useIncrementalUpdates = value;
                     await this.plugin.saveSettings();
                 }));
                 
