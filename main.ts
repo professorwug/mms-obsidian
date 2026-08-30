@@ -6,6 +6,7 @@ import { RenameModal } from './RenameModal';
 import { RenameSymbolsModal } from './RenameSymbolsModal';
 import { getNextAvailableChildId, isMobileApp, executeCommand, getPlatformAppropriateFilePath, findFilesWithProblematicSymbols, getProblematicSymbols, openOrFocusFile } from './utils';
 import { FileGraph, buildFileGraph, GraphNode, applyFileCreate, applyFileDelete, applyFileRename, diffGraphs } from './FileGraph';
+import { ReadingExperience } from './src/reading/ReadingExperience';
 
 // Remember to rename these classes and interfaces!
 
@@ -34,6 +35,9 @@ interface MMSPluginSettings {
     folgezettelBrowserFontSize: number;
     useIncrementalUpdates: boolean;
     browserRootPath: string;
+    enableSidenotes: boolean;
+    enablePagedReading: boolean;
+    pagedReadingByDefault: boolean;
 }
 
 const DEFAULT_SETTINGS: MMSPluginSettings = {
@@ -63,7 +67,10 @@ const DEFAULT_SETTINGS: MMSPluginSettings = {
     autoRevealFiles: false,
     folgezettelBrowserFontSize: 14,
     useIncrementalUpdates: true,
-    browserRootPath: ''
+    browserRootPath: '',
+    enableSidenotes: true,
+    enablePagedReading: true,
+    pagedReadingByDefault: false
 }
 
 function generateRandomPort(): number {
@@ -106,6 +113,7 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
     private marimoInstances: Map<string, MarimoInstance> = new Map();
     private graphUpdateCallbacks: Set<(graph: FileGraph) => void> = new Set();
     private fileOpenSource: string | null = null; // Track if file was opened from the browser
+    private readingExperience: ReadingExperience | null = null;
 
     // Method to set the file open source (used by FileBrowserView)
     setFileOpenSource(source: string | null) {
@@ -134,6 +142,9 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
     
     async onload() {
         await this.loadSettings();
+
+        this.readingExperience = new ReadingExperience(this, () => this.settings);
+        this.addChild(this.readingExperience);
 
         // Register the custom view type
         this.registerView(
@@ -400,6 +411,26 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
             }
         });
 
+        this.addCommand({
+            id: 'toggle-paged-reading',
+            name: 'Toggle paged reading for active pane',
+            callback: () => this.readingExperience?.toggleActivePanePagination()
+        });
+
+        this.addCommand({
+            id: 'copy-paged-reading-performance',
+            name: 'Copy paged reading performance report',
+            callback: async () => {
+                const report = this.readingExperience?.getPerformanceReport();
+                if (!report) {
+                    new Notice('No paged reading performance data available');
+                    return;
+                }
+                await navigator.clipboard.writeText(report);
+                new Notice('Paged reading performance report copied');
+            }
+        });
+
         // This adds a settings tab so the user can configure various aspects of the plugin
         this.addSettingTab(new MMSSettingTab(this.app, this));
     }
@@ -412,6 +443,7 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
 
         // Shut down all Marimo servers
         this.shutdownAllMarimoServers();
+        this.readingExperience = null;
     }
 
     async loadSettings() {
@@ -422,6 +454,10 @@ export default class MMSPlugin extends Plugin implements IMMSPlugin {
 
     async saveSettings() {
         await this.saveData(this.settings);
+    }
+
+    refreshReadingExperience() {
+        this.readingExperience?.refreshSettings();
     }
 
     updateFolgezettelBrowserFontSize() {
@@ -1541,6 +1577,44 @@ class MMSSettingTab extends PluginSettingTab {
                 text: 'Some features are limited on mobile devices. External commands and Marimo integration are disabled.'
             });
         }
+
+        containerEl.createEl('h2', { text: 'Reading experience' });
+        containerEl.createEl('p', {
+            text: 'These features activate only with the MMS theme. Sidenotes use ordinary Markdown footnotes; paged reading affects Reading view only.'
+        });
+
+        new Setting(containerEl)
+            .setName('Sidenotes')
+            .setDesc('Render standard Markdown footnotes in the margin, with accessible popovers in narrow panes.')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.enableSidenotes)
+                .onChange(async (value) => {
+                    this.plugin.settings.enableSidenotes = value;
+                    await this.plugin.saveSettings();
+                    this.plugin.refreshReadingExperience();
+                }));
+
+        new Setting(containerEl)
+            .setName('Paged reading')
+            .setDesc('Make the experimental page controls available in Reading view. Use the command palette or the on-page control to toggle each pane.')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.enablePagedReading)
+                .onChange(async (value) => {
+                    this.plugin.settings.enablePagedReading = value;
+                    await this.plugin.saveSettings();
+                    this.plugin.refreshReadingExperience();
+                }));
+
+        new Setting(containerEl)
+            .setName('Start in paged reading')
+            .setDesc('Turn paged reading on when a new Reading-view pane is opened. Leave off for per-pane opt-in.')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.pagedReadingByDefault)
+                .onChange(async (value) => {
+                    this.plugin.settings.pagedReadingByDefault = value;
+                    await this.plugin.saveSettings();
+                    this.plugin.refreshReadingExperience();
+                }));
 
         // File Type Actions Section
         containerEl.createEl('h2', { text: 'File Type Actions' });

@@ -7,6 +7,393 @@ If your plugin does not need CSS, delete this file.
 
 */
 
+/* -------------------------------------------------------------------------
+   MMS theme companion: semantic footnotes and paged Reading view
+   ------------------------------------------------------------------------- */
+
+.mms-reading-pane {
+    position: relative;
+}
+
+.mms-reading-pane .mms-footnote-source {
+    display: none;
+}
+
+.mms-reading-pane .mms-sidenotes-wide .markdown-preview-sizer,
+.mms-reading-pane .mms-paged-reading-active .markdown-preview-sizer {
+    position: relative;
+}
+
+.mms-sidenote-rail {
+    position: absolute;
+    z-index: 2;
+    top: 0;
+    left: calc(100% + 2rem);
+    width: var(--mms-sidenote-width, 240px);
+    height: 100%;
+    color: var(--text-muted);
+    font-size: 0.82em;
+    line-height: 1.35;
+    box-sizing: border-box;
+    max-width: calc(100% - 0.5rem);
+    overflow: visible;
+}
+
+.mms-sidenote-rail > ol,
+.mms-sidenote-disclosure > ol {
+    margin: 0;
+    padding: 0 0 0 1.45em;
+    list-style: decimal;
+}
+
+.mms-sidenote-rail .mms-sidenote {
+    position: absolute;
+    left: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.mms-sidenote-rail .mms-sidenote a,
+.mms-sidenote-popover .mms-sidenote a {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.mms-sidenote-rail .mms-sidenote::marker,
+.mms-sidenote-disclosure .mms-sidenote::marker {
+    color: var(--text-accent);
+    font-variant-numeric: tabular-nums;
+}
+
+.mms-sidenote-rail .mms-sidenote > :first-child,
+.mms-sidenote-disclosure .mms-sidenote > :first-child {
+    margin-top: 0;
+}
+
+.mms-sidenote-rail .mms-sidenote > :last-child,
+.mms-sidenote-disclosure .mms-sidenote > :last-child {
+    margin-bottom: 0;
+}
+
+.mms-sidenote-disclosure {
+    margin: 0.65rem 0 1rem;
+    padding: 0.65rem 0.85rem;
+    border-left: 1px solid var(--text-accent);
+    background: color-mix(in srgb, var(--background-secondary) 58%, transparent);
+    color: var(--text-muted);
+    font-size: 0.9em;
+}
+
+.mms-sidenote-disclosure[hidden] {
+    display: none;
+}
+
+.mms-sidenote-popover {
+    position: fixed;
+    z-index: var(--layer-popover, 30);
+    width: min(22rem, calc(100vw - 1rem));
+    max-height: min(24rem, calc(100vh - 1rem));
+    padding: 0.75rem 0.9rem;
+    overflow: auto;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m, 6px);
+    background: var(--background-primary);
+    box-shadow: var(--shadow-l);
+    color: var(--text-normal);
+    font-family: var(--font-text);
+    font-size: 0.92rem;
+    line-height: 1.4;
+    box-sizing: border-box;
+}
+
+.mms-sidenote-popover:focus {
+    outline: none;
+}
+
+.mms-sidenote-popover > ol {
+    margin: 0;
+    padding-left: 1.45em;
+}
+
+.mms-sidenote-popover .mms-sidenote {
+    margin: 0;
+    padding: 0;
+}
+
+.mms-sidenote-popover .mms-sidenote > :first-child {
+    margin-top: 0;
+}
+
+.mms-sidenote-popover .mms-sidenote > :last-child {
+    margin-bottom: 0;
+}
+
+.mms-sidenotes-narrow a[data-mms-sidenote-target] {
+    cursor: pointer;
+}
+
+.mms-page-controls {
+    position: absolute;
+    z-index: var(--layer-popover, 30);
+    right: 1rem;
+    bottom: calc(0.8rem + 18px);
+    display: flex;
+    align-items: center;
+    gap: 0.2rem;
+    padding: 0.25rem;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m, 6px);
+    background: color-mix(in srgb, var(--background-primary) 92%, transparent);
+    box-shadow: var(--shadow-s);
+    backdrop-filter: blur(8px);
+    font-family: var(--font-interface);
+    font-size: var(--font-ui-smaller);
+}
+
+.mms-page-controls .mms-page-button {
+    min-width: 2rem;
+    padding-inline: 0.45rem;
+}
+
+.mms-page-controls .mms-page-button:first-child {
+    width: 2rem;
+    padding-inline: 0.35rem;
+}
+
+.mms-page-controls .mms-page-button.is-active {
+    color: var(--text-accent);
+    background: var(--background-modifier-hover);
+}
+
+.mms-page-status {
+    min-width: 4.5em;
+    width: auto;
+    padding-inline: 0.45rem;
+    color: var(--text-muted);
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.mms-page-status[aria-expanded="true"] {
+    color: var(--text-normal);
+    background: var(--background-modifier-hover);
+}
+
+.mms-toc-popover {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 0.5rem);
+    display: flex;
+    flex-direction: column;
+    width: min(22rem, calc(100vw - 2rem));
+    max-height: min(28rem, calc(100vh - 10rem));
+    padding: 0.45rem;
+    overflow-y: auto;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m, 6px);
+    background: var(--background-primary);
+    box-shadow: var(--shadow-l);
+}
+
+.mms-toc-item {
+    display: block;
+    width: 100%;
+    padding: 0.42rem 0.55rem;
+    border: 0;
+    border-radius: var(--radius-s, 4px);
+    background: transparent;
+    color: var(--text-normal);
+    font: inherit;
+    line-height: 1.3;
+    text-align: left;
+}
+
+.mms-toc-item:hover,
+.mms-toc-item:focus-visible {
+    background: var(--background-modifier-hover);
+    outline: none;
+}
+
+.mms-toc-empty {
+    padding: 0.55rem;
+    color: var(--text-muted);
+}
+
+.mms-reading-selection-toolbar {
+    position: fixed;
+    z-index: var(--layer-menu, 1000);
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.3rem;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m, 6px);
+    background: var(--background-primary);
+    box-shadow: var(--shadow-l);
+    color: var(--text-normal);
+    font-family: var(--font-interface);
+    font-size: var(--font-ui-small);
+}
+
+.mms-reading-selection-toolbar.is-note-form {
+    width: min(30rem, calc(100vw - 1rem));
+}
+
+.mms-reading-selection-action {
+    min-height: 1.9rem;
+    padding: 0.25rem 0.55rem;
+    border: 0;
+    border-radius: var(--radius-s, 4px);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+}
+
+.mms-reading-selection-action:hover,
+.mms-reading-selection-action:focus-visible {
+    background: var(--background-modifier-hover);
+    outline: none;
+}
+
+.mms-reading-selection-toolbar:not(.is-note-form) .mms-reading-selection-action:first-child:not(:only-child) {
+    text-decoration: underline;
+    text-decoration-color: rgba(246, 211, 72, 0.85);
+    text-decoration-thickness: 0.45em;
+    text-underline-offset: -0.25em;
+    text-decoration-skip-ink: none;
+}
+
+.mms-reading-note-input {
+    flex: 1;
+    min-width: 8rem;
+}
+
+.mms-paged-reading-active.markdown-preview-view {
+    scroll-snap-type: y mandatory !important;
+    scroll-padding-top: var(--mms-page-top, 72px) !important;
+    overscroll-behavior-y: contain;
+    overflow-anchor: none;
+}
+
+/* The native Reading sizer is virtualized and therefore cannot own durable
+   page breaks. In paged mode it remains mounted for Obsidian's lifecycle but
+   leaves layout; the complete MMS rendering becomes the visible document. */
+.mms-stable-reading-active.markdown-preview-view
+    > .markdown-preview-sizer:not(.mms-paged-document) {
+    display: none !important;
+}
+
+.mms-paged-document.markdown-preview-sizer {
+    position: relative;
+    visibility: hidden;
+}
+
+.mms-paged-document.markdown-preview-sizer.is-ready {
+    visibility: visible;
+}
+
+.mms-paged-reading-active.mms-pagination-reflowing.markdown-preview-view {
+    scroll-snap-type: none !important;
+    scroll-behavior: auto;
+}
+
+.mms-paged-reading-active.mms-pagination-navigating.markdown-preview-view {
+    scroll-snap-type: none !important;
+}
+
+.mms-paged-reading-active .markdown-preview-sizer img,
+.mms-paged-reading-active .markdown-preview-sizer video,
+.mms-paged-reading-active .markdown-preview-sizer canvas,
+.mms-paged-reading-active .markdown-preview-sizer svg {
+    max-height: calc(var(--mms-page-height, 100vh) - 8rem);
+    object-fit: contain;
+}
+
+.mms-paged-reading-active .markdown-preview-sizer pre,
+.mms-paged-reading-active .markdown-preview-sizer table {
+    max-height: calc(var(--mms-page-height, 100vh) - 8rem);
+    overflow: auto;
+}
+
+.mms-page-marker {
+    position: absolute;
+    left: 0;
+    width: 1px;
+    height: 1px;
+    pointer-events: none;
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+}
+
+.mms-page-extent {
+    position: absolute;
+    left: 0;
+    width: 1px;
+    height: 1px;
+    pointer-events: none;
+}
+
+.mms-page-spacer,
+.mms-page-tail {
+    display: block;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    pointer-events: none;
+}
+
+/* KOReader-style continuity cue shown briefly after Editing → Reading. */
+.mms-reading-return-target {
+    position: relative;
+}
+
+.mms-reading-return-target::before {
+    content: '';
+    position: absolute;
+    top: 0.25em;
+    left: -18px;
+    width: 4px;
+    height: 1.35em;
+    border-radius: 2px;
+    background: #111;
+    pointer-events: none;
+    animation: mms-reading-return-mark 2.2s ease-out both;
+}
+
+@keyframes mms-reading-return-mark {
+    0%, 12% { opacity: 0; transform: scaleY(0.65); }
+    22%, 72% { opacity: 0.9; transform: scaleY(1); }
+    100% { opacity: 0; transform: scaleY(0.85); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .mms-paged-reading-active.markdown-preview-view {
+        scroll-behavior: auto;
+    }
+}
+
+@media print {
+    .mms-page-controls,
+    .mms-page-marker,
+    .mms-page-extent,
+    .mms-page-spacer,
+    .mms-page-tail,
+    .mms-sidenote-rail,
+    .mms-sidenote-disclosure {
+        display: none !important;
+    }
+
+    .mms-footnote-source {
+        display: block !important;
+    }
+}
+
 .file-browser-container {
     padding: 4px; /* Reduced from 10px to maximize content display */
     width: 100%;

@@ -1,16 +1,17 @@
-# Obsidian Sample Plugin
+# Maps, Masterplans & Searches (MMS)
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+MMS is an Obsidian plugin for hierarchical Folgezettel browsing, computational notes, and a book-like reading experience.
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+When paired with the sibling **MMS** theme, the reading module adds:
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open Sample Modal" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+- Responsive sidenotes generated from standard Markdown footnotes. Wide panes use a gutter-aware margin rail; narrow panes open accessible, non-flowing footnote popovers.
+- Experimental, per-pane paged scrolling in Reading view, with physical page gaps, smooth snapping, keyboard navigation, a page counter, and a table of contents. Toggle it with the **MMS: Toggle paged reading for active pane** command or the on-page control.
+- Position continuity when switching between Editing and Reading views, including a temporary gutter mark beside the corresponding semantic block.
+- Reading-view selection actions for semantically snapped, merge-aware Markdown highlights and footnote notes.
+- Transition profiling is available through **MMS: Copy paged reading performance report**; it records input latency, composition cost, mutations, longest frame, and estimated dropped frames.
+- A safe fallback to Obsidian's native endnotes and continuous scrolling whenever a feature or the MMS theme is disabled.
+
+Live Preview stays a normal editor. Its 720px maximum prose measure is supplied by the MMS theme rather than editor DOM manipulation.
 
 ## First time developing plugins?
 
