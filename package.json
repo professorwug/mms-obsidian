@@ -1,6 +1,6 @@
 {
   "name": "mms-obsidian",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "A hierarchical file browser based on folgezettel IDs",
   "main": "main.js",
   "scripts": {

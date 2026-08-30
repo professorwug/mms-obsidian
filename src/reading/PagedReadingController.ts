@@ -283,7 +283,10 @@ export class PagedReadingController {
         const shortViewport = pageHeight < 600;
         this.pageTopSpace = shortViewport ? 32 : (compact ? 48 : 72);
         this.pageBottomSpace = shortViewport ? 68 : (compact ? 76 : 96);
-        this.pageOrigin = content.offsetTop;
+        // Keep the snap grid rooted at the viewport rather than at the
+        // theme-dependent sizer offset. Page 1 is scrollTop 0 and every later
+        // page is exactly one viewport farther down.
+        this.pageOrigin = this.pageTopSpace;
         this.preview.style.setProperty('--mms-page-height', `${pageHeight}px`);
         this.preview.style.setProperty('--mms-page-top', `${this.pageTopSpace}px`);
         this.preview.style.setProperty('--mms-page-bottom', `${this.pageBottomSpace}px`);
@@ -311,8 +314,10 @@ export class PagedReadingController {
         const placements: Array<{ block: HTMLElement; height: number }> = [];
         measurements.forEach((measurement, index) => {
             if (!measurement) return;
-            const adjustedY = measurement.y + cumulativeSpacerHeight;
-            const localY = ((adjustedY % pageHeight) + pageHeight) % pageHeight;
+            const adjustedY = content.offsetTop + measurement.y + cumulativeSpacerHeight;
+            const localY = ((
+                (adjustedY - this.pageOrigin) % pageHeight
+            ) + pageHeight) % pageHeight;
             const nextHeight = measurement.isHeading ? measurements[index + 1]?.height ?? 0 : 0;
             const groupedHeight = measurement.height + nextHeight;
             if (localY + groupedHeight <= usableHeight || groupedHeight > usableHeight) return;
@@ -332,7 +337,8 @@ export class PagedReadingController {
         });
         spacers.forEach(spacer => this.alignSpacerToBoundary(spacer, content, pageHeight));
         const contentHeight = Math.max(content.scrollHeight, content.getBoundingClientRect().height);
-        this.pageCount = Math.max(1, Math.ceil(contentHeight / pageHeight));
+        const contentBottom = content.offsetTop + contentHeight;
+        this.pageCount = Math.max(1, Math.ceil((contentBottom + this.pageBottomSpace) / pageHeight));
         this.syncSnapLayer(pageHeight);
         this.buildTableOfContents(content, pageHeight);
 
@@ -378,8 +384,8 @@ export class PagedReadingController {
     private alignSpacerToBoundary(spacer: HTMLElement, content: HTMLElement, pageHeight: number): void {
         const contentTop = content.getBoundingClientRect().top;
         const rect = spacer.getBoundingClientRect();
-        const end = rect.top - contentTop + rect.height;
-        const remainder = ((end % pageHeight) + pageHeight) % pageHeight;
+        const end = content.offsetTop + rect.top - contentTop + rect.height;
+        const remainder = (((end - this.pageOrigin) % pageHeight) + pageHeight) % pageHeight;
         const correction = remainder <= pageHeight / 2 ? -remainder : pageHeight - remainder;
         if (Math.abs(correction) < 0.1) return;
         const currentHeight = Number.parseFloat(spacer.style.height) || rect.height;
@@ -416,7 +422,10 @@ export class PagedReadingController {
             const sectionEnd = headings[position.headingIndex + 1] ?? contentHeight;
             y = sectionStart + position.sectionFraction * Math.max(0, sectionEnd - sectionStart);
         }
-        return Math.max(0, Math.min(this.pageCount - 1, Math.floor(y / pageHeight)));
+        return Math.max(0, Math.min(
+            this.pageCount - 1,
+            Math.floor((content.offsetTop + y - this.pageOrigin) / pageHeight)
+        ));
     }
 
     private flashPosition(position: ReadingDocumentPosition, content: HTMLElement): void {
@@ -499,8 +508,13 @@ export class PagedReadingController {
             button.style.paddingLeft = `${0.55 + (depth - 1) * 0.8}rem`;
             button.textContent = heading.textContent?.trim() || 'Untitled section';
             button.addEventListener('click', () => {
-                const y = block.getBoundingClientRect().top - content.getBoundingClientRect().top;
-                const page = Math.max(0, Math.min(this.pageCount - 1, Math.floor(y / pageHeight)));
+                const y = content.offsetTop
+                    + block.getBoundingClientRect().top
+                    - content.getBoundingClientRect().top;
+                const page = Math.max(0, Math.min(
+                    this.pageCount - 1,
+                    Math.floor((y - this.pageOrigin) / pageHeight)
+                ));
                 this.closeTableOfContents();
                 this.goToPage(page);
             });

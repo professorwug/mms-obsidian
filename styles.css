@@ -461,22 +461,33 @@ If your plugin does not need CSS, delete this file.
 
 .file-item .collapse-icon {
     margin-right: 6px;
-    font-size: 12px; /* Increased from 8px */
-    width: 12px; /* Increased from 8px */
+    width: 12px;
+    height: 1.5em;
     flex-shrink: 0;
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     color: var(--text-muted);
-    align-self: flex-start; /* Align to the top */
-    margin-top: 3px; /* Adjusted to center with text */
+    align-self: flex-start;
+    margin-top: 2px;
     transition: transform 0.15s ease;
-    font-weight: bold;
-    line-height: 1;
-    transform-origin: center; /* Ensure rotation happens around center */
+    transform-origin: center;
+}
+
+.file-browser-container .collapse-icon svg {
+    display: block;
+    width: 6px;
+    height: 10px;
+    overflow: visible;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
 }
 
 .file-item .collapse-icon.expanded {
     transform: rotate(90deg);
-    margin-top: 2px; /* Adjust position when rotated to keep centered */
 }
 
 /* Hierarchy lines using children container approach */
@@ -627,9 +638,9 @@ If your plugin does not need CSS, delete this file.
     padding: 5px 8px 6px 8px !important;
     min-height: 36px !important; /* Minimum height for better touch targets */
     display: flex !important;
-    flex-direction: column !important;
-    justify-content: center !important;
-    position: relative !important; /* For absolute positioning of children */
+    flex-direction: row !important;
+    align-items: flex-start !important;
+    justify-content: flex-start !important;
 }
 
 .mobile-view .file-item {
@@ -638,27 +649,22 @@ If your plugin does not need CSS, delete this file.
 
 /* Reposition collapse icons inline with first line */
 .mobile-view .file-item-content.has-collapse-icon {
-    position: relative !important;
-    padding-left: 20px !important; /* Make room for the icon */
+    padding-left: 8px !important;
 }
 
 .mobile-view .file-item-content .collapse-icon {
-    font-size: 12px !important;
     width: 12px !important;
-    margin-right: 0 !important;
+    height: 1.5em !important;
+    margin-right: 4px !important;
     margin-top: 0 !important;
-    position: absolute !important;
-    left: 5px !important;
-    top: 50% !important;
-    transform: translateY(-50%);
-    height: auto !important;
-    font-weight: bold !important;
+    position: static !important;
+    align-self: flex-start !important;
+    transform: none;
     transition: transform 0.15s ease !important;
 }
 
 .mobile-view .file-item-content .collapse-icon.expanded {
-    transform: translateY(-50%) rotate(90deg) !important;
-    /* Mobile positioning is handled by the transform above */
+    transform: rotate(90deg) !important;
 }
 
 /* Minimize padding to save space */
@@ -845,7 +851,11 @@ If your plugin does not need CSS, delete this file.
 }
 
 .mms-recents-header .collapse-icon {
-    display: inline-block;
+    display: inline-flex;
+    width: 12px;
+    height: 1.5em;
+    align-items: center;
+    justify-content: center;
     transition: transform 100ms ease-in-out;
 }
 
@@ -896,7 +906,11 @@ If your plugin does not need CSS, delete this file.
 }
 
 .mms-unfiled-header .collapse-icon {
-    display: inline-block;
+    display: inline-flex;
+    width: 12px;
+    height: 1.5em;
+    align-items: center;
+    justify-content: center;
     transition: transform 100ms ease-in-out;
 }
 

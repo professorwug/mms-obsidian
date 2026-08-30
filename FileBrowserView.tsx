@@ -32,6 +32,14 @@ interface IMMSPlugin {
     renameFileWithExtensions: (file: TFile, newName: string, silent?: boolean) => Promise<void>;
 }
 
+const CollapseIcon: React.FC<{ expanded: boolean }> = ({ expanded }) => (
+    <span className={`collapse-icon ${expanded ? 'expanded' : ''}`} aria-hidden="true">
+        <svg viewBox="0 0 8 14" focusable="false">
+            <path d="M1 1 L7 7 L1 13" />
+        </svg>
+    </span>
+);
+
 /**
  * Children of a node as shown in the browser: excludes the root marker, and —
  * when a root folder is configured — folders without folgezettel IDs.
@@ -620,11 +628,7 @@ const FileItem: React.FC<FileItemProps> = ({
                     onDoubleClick={handleDoubleClick}
                     onContextMenu={handleContextMenu}
                 >
-                    {hasChildren && (
-                        <span className={`collapse-icon ${expanded ? 'expanded' : ''}`}>
-                            ›
-                        </span>
-                    )}
+                    {hasChildren && <CollapseIcon expanded={expanded} />}
                     <div className="file-name-container">
                         <span className="file-name">
                             {displayName}
@@ -1421,7 +1425,7 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                         className="mms-recents-header"
                         onClick={() => setRecentsExpanded(!recentsExpanded)}
                     >
-                        <span className={`collapse-icon ${recentsExpanded ? 'expanded' : ''}`}>›</span>
+                        <CollapseIcon expanded={recentsExpanded} />
                         <span className="mms-recents-title">Recent</span>
                     </div>
                     {recentsExpanded && (
@@ -1500,7 +1504,7 @@ const FileBrowserComponent: React.FC<FileBrowserComponentProps> = ({
                             className="mms-unfiled-header"
                             onClick={() => setUnfiledExpanded(!unfiledExpanded)}
                         >
-                            <span className={`collapse-icon ${unfiledExpanded ? 'expanded' : ''}`}>›</span>
+                            <CollapseIcon expanded={unfiledExpanded} />
                             <span className="mms-unfiled-title">Unfiled</span>
                             <span className="mms-unfiled-count">{unfiledChildren.length}</span>
                         </div>
